@@ -1,18 +1,14 @@
 extends Node2D
-## M2：多关 + 通关流程（在 M1 的棋盘/控制范围/预览/悔棋之上）。
+## 棋盘主场景：画格子 / 控制范围 / 预览 / HUD，把输入翻译成 Core 的调用。
 ##
 ## 表现层只做三件事：读 Core 的结果来画、把玩家输入翻译成 Core 的函数调用、播表现。
 ## 规则一律不写在这里 —— 写进来就没法给求解器复用了。
 ##
+## 【单位是场景】棋子上场不是这里画出来的：关卡场景（Levels/level_XX.tscn）整个被实例化进来，
+## 单位就是那里面拖好的 Sprite2D / Polygon2D 节点，本脚本只负责按 Core 的坐标去挪它们。
+## 想换美术就改 Characters/ 里的场景，不用碰这个文件。
+##
 ## 所有屏幕文字都是 ASCII：Godot 内置字体没有 CJK 字形，中文在 web 版会画成方块。
-## 占位贴图借自隔壁 hollow-bastion（战车/骑士/白猫士兵/恐惧之影），M4 换真美术时整体替换。
-
-const TEX_CAT := {
-	"pawn": preload("res://CatCatcherMAIN/Graphics/placeholders/cat_pawn.png"),
-	"rook": preload("res://CatCatcherMAIN/Graphics/placeholders/cat_rook.png"),
-	"horse": preload("res://CatCatcherMAIN/Graphics/placeholders/cat_horse.png"),
-}
-const TEX_DOG := preload("res://CatCatcherMAIN/Graphics/placeholders/dog.png")
 
 const FONT_BIG := 30
 const FONT_MID := 18
@@ -34,11 +30,17 @@ var board_origin := Vector2i.ZERO
 var colors: Dictionary = {}
 var meat_max_hp: int = 20
 
+## ---- 关卡场景与单位节点 ----
+var _level_root: Node2D = null      # 装着实例化进来的关卡场景
+var _cat_nodes: Array = []          # 顺序必须和 controller.state.cats 一致
+var _dog_node: Node2D = null
+var _meat_node: Node2D = null
+
 ## 选中的猫下标，-1 = 没选中
 var _selected: int = -1
 ## 鼠标下的格子，(-1,-1) = 不在棋盘上
 var _hover := Vector2i(-1, -1)
-## 当前关卡在 Level.LEVEL_PATHS 里的下标
+## 当前关卡在 Levels.SCENES 里的下标
 var _level_index: int = 0
 
 ## ---- 提示系统（M3）----
@@ -63,26 +65,51 @@ func _ready() -> void:
 	meat_max_hp = int(config["meat"]["max_hp"])
 
 	controller = GameController.new()
-	controller.state_changed.connect(queue_redraw)
+	controller.state_changed.connect(_on_state_changed)
 	controller.game_over.connect(_on_game_over)
 
 	RenderingServer.set_default_clear_color(_color("bg"))
 	print("[CatCatcher] 左键点猫选中 / 点高亮格移动 | Z 悔棋 | R 重开本关 | 通关后 SPACE 下一关")
 
-	# 启动校验：每关都必须有解（求解器真搜，不是读 solution 糊弄）
-	var problems := Level.validate_all(config)
+	# 启动校验：每关都必须有解（求解器真搜，不是读标准答案糊弄）
+	var problems := Levels.validate_all(config)
 	for p in problems:
 		push_error("[关卡校验] " + String(p))
 	if problems.is_empty():
-		print("[CatCatcher] 关卡校验通过（%d 关全部有解）" % Level.count())
+		print("[CatCatcher] 关卡校验通过（%d 关全部有解）" % Levels.count())
 
 	_start_level(0)
 
 
 ## 载入第 index 关。重开本关也走这里。
 func _start_level(index: int) -> void:
-	_level_index = clampi(index, 0, Level.count() - 1)
-	level = Level.from_index(_level_index)
+	_level_index = clampi(index, 0, Levels.count() - 1)
+
+	# 整个关卡场景实例化进来 —— 单位就是它里面拖好的节点，本脚本只负责挪位置
+	if _level_root != null:
+		_level_root.queue_free()
+	_level_root = Node2D.new()
+	_level_root.name = "LevelRoot"
+	add_child(_level_root)
+
+	var scene_node: Node = Levels.SCENES[_level_index].instantiate()
+	_level_root.add_child(scene_node)
+
+	level = Level.from_dict(scene_node.collect())
+
+	_cat_nodes.clear()
+	_dog_node = null
+	_meat_node = null
+	for u in scene_node.collect_units():
+		match String(u["kind"]):
+			"cat":
+				_cat_nodes.append(u["node"])
+			"dog":
+				if _dog_node == null:
+					_dog_node = u["node"]
+			"meat":
+				_meat_node = u["node"]
+
 	if level == null:
 		push_error("关卡加载失败: index %d" % _level_index)
 		return
@@ -94,17 +121,45 @@ func _start_level(index: int) -> void:
 	_idle = 0.0
 	_bump_version()
 	_update_hint()
+	_sync_units()
 	queue_redraw()
 
 	print("[CatCatcher] 关卡 %d/%d %s | 猫 %d 只 | 狗 %s @ %s | 肉 @ %s | HP %d" % [
-		_level_index + 1, Level.count(), level.display_name,
+		_level_index + 1, Levels.count(), level.display_name,
 		level.cat_spawns.size(), level.dog_type,
 		str(level.dog_pos), str(level.meat_pos), controller.state.meat_hp,
 	])
 
 
 func _has_next_level() -> bool:
-	return _level_index + 1 < Level.count()
+	return _level_index + 1 < Levels.count()
+
+
+func _on_state_changed() -> void:
+	_sync_units()
+	queue_redraw()
+
+
+## 把场景里的单位节点挪到 Core 说的位置上。**单位是场景，不是这里画的。**
+func _sync_units() -> void:
+	if controller == null or controller.state == null:
+		return
+	var state := controller.state
+
+	for i in _cat_nodes.size():
+		if i >= state.cats.size():
+			break
+		_cat_nodes[i].position = _cell_center(state.cats[i]["pos"])
+		_cat_nodes[i].visible = true
+
+	if _dog_node != null:
+		_dog_node.position = _cell_center(state.dog["pos"])
+	if _meat_node != null:
+		_meat_node.position = _cell_center(state.meat_pos)
+
+
+func _cell_center(cell: Vector2i) -> Vector2:
+	return Vector2(board_origin) + Vector2(cell) * cell_size + Vector2(cell_size, cell_size) * 0.5
 
 
 # ---------------------------------------------------------------- 提示 ----
@@ -171,7 +226,6 @@ func _draw() -> void:
 	var controlled := MoveRules.controlled_cells(state)
 	_draw_control(controlled)
 	_draw_selected_reach()
-	_draw_units()
 	_draw_dog_warning(controlled)
 	_draw_preview()
 	_draw_selection()
@@ -187,8 +241,6 @@ func _draw_cells() -> void:
 		for x in level.w:
 			var cell := Vector2i(x, y)
 			var fill: Color = _color("cell") if (x + y) % 2 == 0 else _color("cell_alt")
-			if controller.state.obstacles.has(cell):
-				fill = _color("obstacle")
 			draw_rect(_cell_rect(cell), fill)
 
 
@@ -208,23 +260,7 @@ func _draw_selected_reach() -> void:
 		draw_rect(_cell_rect(cell).grow(-6), _color("selected"), false, 2.0)
 
 
-func _draw_units() -> void:
-	var state := controller.state
-
-	# 肉（没有合适贴图，先画方块 + 字）
-	var meat_rect := _cell_rect(state.meat_pos).grow(-10)
-	draw_rect(meat_rect, _color("meat"))
-	_text_centered("MEAT", meat_rect.get_center().x, meat_rect.get_center().y, FONT_SMALL, Color(1, 0.95, 0.9))
-
-	for cat in state.cats:
-		var tex = TEX_CAT.get(cat["type"])
-		var rect := _cell_rect(cat["pos"]).grow(-3)
-		if tex != null:
-			draw_texture_rect(tex, rect, false)
-		else:
-			draw_rect(rect.grow(-6), _color("cat"))
-
-	draw_texture_rect(TEX_DOG, _cell_rect(state.dog["pos"]).grow(-3), false)
+## 单位不在这里画 —— 它们是关卡场景里拖好的节点，由 _sync_units() 挪位置。
 
 
 ## 狗站在被控制的格上 => 红色描边（"它已经被罩住了"）
@@ -307,7 +343,7 @@ func _draw_hud() -> void:
 	_text("TURN %d / %d" % [state.turn, state.max_turns], bar_pos + Vector2(bar_w - 92, 38), FONT_MID, Color(0.9, 0.87, 0.8))
 	# 只显示关卡序号，不显示 level.display_name —— 那是中文，桌面端靠系统字体回退能画，
 	# web 版不一定有回退。关名字留给文档，M4 引入中文字体后再上屏。
-	_text("LEVEL %d / %d" % [_level_index + 1, Level.count()],
+	_text("LEVEL %d / %d" % [_level_index + 1, Levels.count()],
 		bar_pos + Vector2(0, 62), FONT_SMALL, Color(0.78, 0.74, 0.66))
 	_text("LMB pick / move     Z undo     R restart", bar_pos + Vector2(0, 84), FONT_SMALL, Color(0.62, 0.58, 0.5))
 

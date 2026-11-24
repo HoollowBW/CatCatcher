@@ -1,0 +1,39 @@
+[gd_scene load_steps=8 format=3]
+
+[ext_resource type="Script" path="res://CatCatcherMAIN/Levels/level.gd" id="1_script"]
+[ext_resource type="PackedScene" path="res://CatCatcherMAIN/Characters/Cats/cat_rook.tscn" id="2_rook"]
+[ext_resource type="PackedScene" path="res://CatCatcherMAIN/Characters/Cats/cat_horse.tscn" id="3_horse"]
+[ext_resource type="PackedScene" path="res://CatCatcherMAIN/Characters/Cats/cat_pawn.tscn" id="4_pawn"]
+[ext_resource type="PackedScene" path="res://CatCatcherMAIN/Characters/Dogs/dog_stray.tscn" id="5_dog"]
+[ext_resource type="PackedScene" path="res://CatCatcherMAIN/Characters/Meat/meat.tscn" id="6_meat"]
+[ext_resource type="PackedScene" path="res://CatCatcherMAIN/Characters/Objects/obstacle.tscn" id="7_obstacle"]
+
+[node name="Level02" type="Node2D"]
+script = ExtResource("1_script")
+level_id = 2
+level_name = "教学 · 石缝"
+max_turns = 12
+
+[node name="CatRook" parent="." instance=ExtResource("2_rook")]
+position = Vector2(640, 328)
+
+[node name="CatHorse" parent="." instance=ExtResource("3_horse")]
+position = Vector2(384, 200)
+
+[node name="CatPawn" parent="." instance=ExtResource("4_pawn")]
+position = Vector2(512, 136)
+
+[node name="Dog" parent="." instance=ExtResource("5_dog")]
+position = Vector2(512, 328)
+
+[node name="Meat" parent="." instance=ExtResource("6_meat")]
+position = Vector2(320, 72)
+
+[node name="Obstacle1" parent="." instance=ExtResource("7_obstacle")]
+position = Vector2(448, 264)
+
+[node name="Obstacle2" parent="." instance=ExtResource("7_obstacle")]
+position = Vector2(448, 328)
+
+[node name="Obstacle3" parent="." instance=ExtResource("7_obstacle")]
+position = Vector2(448, 392)

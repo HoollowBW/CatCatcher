@@ -19,9 +19,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\dev.ps1
 
 ```
 CatCatcherMAIN/
-  Core/            纯逻辑层（规则、状态、流程）—— 不碰节点，求解器要复用
-  Scenes/          表现层（棋盘渲染、输入）
-  Data/            关卡与数值 JSON
+  Core/            纯逻辑层（规则、状态、求解器）—— 不碰节点
+  Characters/      单位场景：Cats/ Dogs/ Meat/ Objects/
+  Levels/          关卡场景：level_01.tscn … + levels.gd；做新关直接复制
+  Scenes/          棋盘主场景 board.tscn
+  Data/            全局数值 game_config.json
+tests/             selftest.gd（规则自检）/ solvecheck.gd（量关卡难度）
 tools/dev.ps1      一键导出 + 本地预览
 tools/serve.ps1    本地静态服务器（dev.ps1 会自己调）
 export_presets.cfg web 导出配置
@@ -38,7 +41,7 @@ build/web/         导出产物（gitignore + .gdignore，不入库）
 改完 Core 或数据层，跑这两个：
 
 ```powershell
-# 规则层自检（改完 Core/ 或关卡 JSON 必跑），退出码 0 = 全过
+# 规则层自检（改完 Core/ 或关卡场景必跑），退出码 0 = 全过
 godot --headless --path . --script res://tests/selftest.gd
 
 # 关卡尺子：量每关最短几步能围死（迭代加深 DFS），设计新关时用
@@ -54,12 +57,18 @@ godot --headless --main-pack build\web\index.pck --quit
 godot --path . --write-movie "$env:TEMP\shot\f.png" --fixed-fps 30 --quit-after 3
 ```
 
-## 关卡编辑器
+## 做关卡
 
-Godot 里打开 `CatCatcherMAIN/Scenes/level_editor.tscn`，把 `level_marker.tscn` 拖进去当子节点，
-设好 `kind` / `cat_type`，往格子上拖（会自动吸到格心），Inspector 里点「导出关卡 JSON」。
+关卡就是场景，用 Godot 编辑器本身编辑：
 
-导出后记得把新关加进 `Level.LEVEL_PATHS` 和 `Level._EXPORT_DEPS`，否则 web 版读不到。
+1. 打开 `CatCatcherMAIN/Levels/level_01.tscn`
+2. 把 `Characters/` 里的单位场景拖进去，随便往格子上扔 —— 会自动吸到格心
+3. 做下一关：FileSystem 里右键那个 `.tscn` → 复制，改名，挪几个单位
+4. 新关在 `Levels/levels.gd` 的 `SCENES` 里加一行
+
+⚠️ 单位类型是从**场景路径**认的（`Cats/cat_rook.tscn` → 车猫），别随手重命名文件或挪文件夹。
+
+跑一次 `solvecheck` 量一下难度，启动时也会自动校验每关有解。
 
 ## 操作
 

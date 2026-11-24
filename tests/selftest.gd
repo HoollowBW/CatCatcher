@@ -236,52 +236,35 @@ func _test_lose() -> void:
 	_eq(gc.state.meat_hp, 0, "HP 不会显示成负数")
 
 
-## 每关的参考解法照着重放一遍 —— 这是"关卡不是死局"的回归保证。
-## 关卡 JSON 里改了一个坐标但忘了改 solution，这里立刻炸。
+## 每关都必须：能构建、开局不是白送、求解器搜得到解。
+## 关卡改成场景之后不再有标准答案字段，所以这里直接用 Solver 验 —— 和启动校验同一套。
 func _test_levels() -> void:
 	var cfg := Level.load_config()
-	_ok(Level.count() > 0, "至少有一关")
+	_ok(Levels.count() > 0, "至少有一关")
 
-	for i in Level.count():
-		var lv := Level.from_index(i)
+	var depth := int(cfg.get("solver", {}).get("validate_depth", Solver.DEFAULT_DEPTH))
+
+	for i in Levels.count():
+		var lv := Levels.build(i)
 		if lv == null:
 			_fail += 1
-			printerr("  FAIL: 关卡 %d 加载不出来" % (i + 1))
+			printerr("  FAIL: 关卡 %d 构建不出来" % (i + 1))
 			continue
-
-		_ok(not lv.solution.is_empty(), "关卡 %d (%s) 有参考解法" % [i + 1, lv.display_name])
 
 		var gc := GameController.new()
 		gc.setup(lv, cfg)
+
+		# 单位数量要和场景里摆的一致（0 只猫/没狗没肉 = 场景摆错了）
+		_ok(gc.state.cats.size() > 0, "关卡 %d 至少有一只猫" % (i + 1))
+		_ok(not gc.state.dog.is_empty(), "关卡 %d 有狗" % (i + 1))
+		_ok(lv.meat_pos.x >= 0, "关卡 %d 有肉" % (i + 1))
 
 		if Encircle.is_encircled(gc.state):
 			_fail += 1
 			printerr("  FAIL: 关卡 %d 开局就是围死（白送）" % (i + 1))
 			continue
 
-		var replay_ok := true
-		for n in lv.solution.size():
-			var step: Dictionary = lv.solution[n]
-			var at := _cell(step["cat"])
-			var to := _cell(step["to"])
-			var idx := gc.state.cat_at(at)
-			if idx < 0:
-				_fail += 1
-				printerr("  FAIL: 关卡 %d 第 %d 步 —— (%d,%d) 上没有猫" % [i + 1, n + 1, at.x, at.y])
-				replay_ok = false
-				break
-			if not gc.try_move_cat(idx, to):
-				_fail += 1
-				printerr("  FAIL: 关卡 %d 第 %d 步不合法" % [i + 1, n + 1])
-				replay_ok = false
-				break
-
-		if replay_ok:
-			_ok(gc.finished and gc.won, "关卡 %d 参考解法能围死" % (i + 1))
-
-
-func _cell(arr) -> Vector2i:
-	return Vector2i(int(arr[0]), int(arr[1]))
+		_ok(Solver.is_solvable(gc.state, cfg, depth), "关卡 %d 有解" % (i + 1))
 
 
 # ---------------------------------------------------------------- 断言 ----

@@ -30,22 +30,33 @@
 CatCatcherMAIN/
   Core/                     纯逻辑层：可以 import，但不许引用任何节点路径
     game_state.gd           一局的完整可变状态 + 快照/回滚
-    level.gd                关卡数据 + JSON 加载
+    level.gd                运行期关卡数据（纯数据）+ 全局配置读取
+    rules.gd                一个回合的结算（实战/搜索/求解器共用这一份）
     move_rules.gd           走法 = 控制范围（同一份计算）
     encircle.gd             狗的所有合法动作 + 围死判定
     dog_ai.gd               狗的行动决策（实战与预览共用）
+    respawn.gd              撞飞后猫的投放点（确定性）
+    solver.gd               求解器：启动校验 + 提示（唯一一份搜索）
     game_controller.gd      回合流程 + 悔棋栈 + 胜负
-  Scenes/                   表现层：节点、渲染、输入
-    board.tscn / board.gd   棋盘渲染 + 点击选格 + 控制范围 + 预览 + HUD
+  Characters/               单位都是场景，用 Godot 编辑器拖放编辑
+    Cats/   cat_rook.tscn / cat_horse.tscn / cat_pawn.tscn
+    Dogs/   dog_stray.tscn / dog_collie.tscn
+    Meat/   meat.tscn
+    Objects/ obstacle.tscn
+  Levels/                   关卡也是场景
+    level.gd                格子向导 + 吸附 + collect + 按路径认单位（@tool）
+    levels.gd               关卡顺序 SCENES + 启动校验
+    level_01.tscn …         一关一个场景，做新关直接复制
+  Scenes/                   棋盘主场景
+    board.tscn / board.gd   格子 + 控制范围 + 预览 + HUD；单位由关卡场景提供
   Graphics/placeholders/    占位贴图（借自隔壁 hollow-bastion，M4 整体替换）
-  Data/
-    game_config.json        全局数值（肉的 HP、腐坏、啃食、格子尺寸……）
-    levels/level_01.json    关卡数据
-tests/selftest.gd           规则层自检（`--script` 直接跑）
+  Data/game_config.json     全局数值（肉的 HP、腐坏、啃食、格子尺寸、求解器参数……）
+tests/                      selftest.gd（规则自检）/ solvecheck.gd（关卡尺子）
 tools/                      导出与本地预览脚本（不入库产物）
 ```
 
-后面 M1 加 `Scenes/unit.tscn`、`Scenes/hud.tscn`；M4 加 `Graphics/`。**没用到就别建空目录。**
+**单位和关卡都是场景，不是数据文件。** 这是刻意的：Godot 编辑器本身就是最好的关卡编辑器
+（拖放、吸附、复制关卡、可视化摆位），自己再写一套编辑器是重复造轮子。
 
 ## 4. 分层铁律
 
@@ -139,21 +150,20 @@ godot --headless --main-pack build\web\index.pck --quit
 
 ### 8.3 关卡不许是死局，也不许是白送
 
-每关 JSON 里必须有两个东西：
+关卡改成场景之后**不再有"标准答案"字段**，改由求解器验（启动时 + selftest 各跑一遍）：
 
-- `solution`：一条**能走通**的参考解法（元素格式同 `hint`）。`selftest` 会照着重放一遍，
-  走不通就报错。这保证关卡不是死局，也顺便成了改规则后的回归网。
-- 开局不能已经是围死状态，`solvecheck` 会直接报 `BAD`。
+- 每关必须：能构建、至少一只猫、有狗有肉、开局不是已经被围死、`Solver` 在
+  `solver.validate_depth` 步内搜得到解。
+- 任一条不满足就 `push_error` 点名是哪关。
 
 设计新关时用 `tests/solvecheck.gd` 量难度（迭代加深，报**最短**步数）：
 
 ```powershell
-godot --headless --path . --script res://tests/solvecheck.gd -- 4
-godot --headless --path . --script res://tests/solvecheck.gd -- 4 路径/某关.json   # 单测一关
+godot --headless --path . --script res://tests/solvecheck.gd -- 4      # 全部关卡
+godot --headless --path . --script res://tests/solvecheck.gd -- 4 2    # 只量第 2 关
 ```
 
 ⚠️ 别指望 4 步以上：狗是确定性的，分支只来自玩家一侧，但深度一上去节点数还是爆炸。
-真需要深搜留给 M3 的正式求解器。
 
 ⚠️ **空地 + 两只车 = 一步赢**。任何一只车都能一步滑进狗的所在行/列，两只车夹住就完事了。
 所以关卡必须有障碍切断车的直线，或者只给兵/马这种慢单位，否则一律是一步送。
@@ -204,21 +214,36 @@ godot --headless --path . --script res://tests/selftest.gd   # 退出码 0 = 全
 ⚠️ 搜索必须带 `node_budget`（默认 20 万节点）。深度一上去就是指数爆炸，
 宁可返回"搜不到"，也不能把浏览器卡死。深度和预算在 `game_config.json` 的 `solver` 段。
 
-### 8.5 关卡编辑器
+### 8.5 做关卡：用 Godot 编辑器，不另写编辑器
 
-`Scenes/level_editor.tscn` 是照隔壁 HollowBastion「关卡场景 + `@tool`」那套搬过来的，
-区别是隔壁存 `.tscn`、我们**导出 JSON**：
+照隔壁 HollowBastion 那套搬的 —— **关卡就是场景**：
 
-1. Godot 里打开 `level_editor.tscn`
-2. 把 `level_marker.tscn` 拖进去当子节点，设 `kind`（cat / dog / meat / obstacle），猫再设 `cat_type`
-3. 随便往格子上拖 —— 每帧自动吸到格心
-4. Inspector 点「导出关卡 JSON」；改已有关卡就先点「从 JSON 载入」
+1. Godot 里打开 `Levels/level_01.tscn`
+2. 把 `Characters/` 里的单位场景拖进来
+3. 往格子上随便扔 —— `Levels/level.gd` 每帧把单位吸到格心
+4. 做下一关：FileSystem 里右键这个 `.tscn` → **复制**，改名，挪几个单位
+5. 新关在 `Levels/levels.gd` 的 `SCENES` 里加一行
 
-编辑器用的是和游戏**完全同一套**格子坐标（直接读 `game_config.json` 的 origin / cell_size），
-所以导出坐标不会整体偏移。
+**类型的唯一来源是场景路径**，不是导出属性（和隔壁按 `Heros/` `Enemys/` 判阵营同一路数）：
 
-⚠️ 导出后必须手工把新关卡加进 `Level.LEVEL_PATHS` **和** `Level._EXPORT_DEPS`，
-再去掉 `solution`（或者跑一次 `solvecheck` 把解法贴进去）—— 否则 `selftest` 会拦你。
+| 路径 | 含义 |
+|---|---|
+| `Characters/Cats/cat_<type>.tscn` | 猫，type = `rook` / `horse` / `pawn` |
+| `Characters/Dogs/dog_<type>.tscn` | 狗，type = `stray` / `collie` |
+| `Characters/Meat/*` | 肉 |
+| `Characters/Objects/*` | 障碍 |
+
+⚠️ 所以**别随手重命名单位场景或挪文件夹** —— 那等于改掉它的语义。
+
+⚠️ **坐标原点靠惰性初始化**：`Levels.build()` 只 `instantiate()`、不进场景树，`_ready()` 不会跑。
+`Levels/level.gd` 的 `_ensure_geometry()` 就是为了这个 —— 直接相信 `_ready()` 会让所有单位整体偏掉
+（这个坑真踩过：三关坐标全错，第 2、3 关直接变成"开局白送"）。
+
+### 8.6 单位的视觉是场景，不是 board 画的
+
+`Characters/` 里的场景就是单位的全部外观（`Sprite2D` / `Polygon2D`）。`board.gd` **不画单位**，
+只按 Core 算出的格子坐标去 `position = ...` 挪它们（`_sync_units()`）。
+换美术 = 改 `Characters/` 里的场景，一行 board 代码都不用动。
 
 ## 9. 明确不做（别自作主张加）
 - ❌ 血量 / 伤害 / 攻击力系统（肉的 HP 是倒计时，不是战斗）
@@ -235,4 +260,4 @@ godot --headless --path . --script res://tests/selftest.gd   # 退出码 0 = 全
 - 控制范围**不被其他单位阻挡**（纯几何，只有障碍和出界能挡）
 - 控制 = 硬阻挡，围死 = 相邻无空格且相邻无猫
 - 撞飞/扫中 = 动态投放，棋盘满则堆叠（见 8.1）
-- `hint` 元素 = `{"cat": [x,y], "to": [x,y]}`
+- 单位和关卡都是**场景**，不是 JSON（见 8.5 / 8.6）
