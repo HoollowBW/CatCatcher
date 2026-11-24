@@ -1,13 +1,11 @@
 extends Node2D
-## M1：棋盘 + 控制范围 + 单位 + 敌方行动预览 + 悔棋/重开 + 胜负提示。
+## M2：多关 + 通关流程（在 M1 的棋盘/控制范围/预览/悔棋之上）。
 ##
 ## 表现层只做三件事：读 Core 的结果来画、把玩家输入翻译成 Core 的函数调用、播表现。
 ## 规则一律不写在这里 —— 写进来就没法给求解器复用了。
 ##
 ## 所有屏幕文字都是 ASCII：Godot 内置字体没有 CJK 字形，中文在 web 版会画成方块。
 ## 占位贴图借自隔壁 hollow-bastion（战车/骑士/白猫士兵/恐惧之影），M4 换真美术时整体替换。
-
-const LEVEL_PATH := "res://CatCatcherMAIN/Data/levels/level_01.json"
 
 const TEX_CAT := {
 	"pawn": preload("res://CatCatcherMAIN/Graphics/placeholders/cat_pawn.png"),
@@ -40,13 +38,14 @@ var meat_max_hp: int = 20
 var _selected: int = -1
 ## 鼠标下的格子，(-1,-1) = 不在棋盘上
 var _hover := Vector2i(-1, -1)
+## 当前关卡在 Level.LEVEL_PATHS 里的下标
+var _level_index: int = 0
 
 
 func _ready() -> void:
 	config = Level.load_config()
-	level = Level.from_file(LEVEL_PATH)
-	if level == null or config.is_empty():
-		push_error("关卡或配置加载失败 —— 框架没跑通")
+	if config.is_empty():
+		push_error("配置加载失败 —— 框架没跑通")
 		return
 
 	cell_size = int(config["board"]["cell_size"])
@@ -56,19 +55,37 @@ func _ready() -> void:
 	meat_max_hp = int(config["meat"]["max_hp"])
 
 	controller = GameController.new()
-	controller.setup(level, config)
 	controller.state_changed.connect(queue_redraw)
 	controller.game_over.connect(_on_game_over)
 
 	RenderingServer.set_default_clear_color(_color("bg"))
+	print("[CatCatcher] 左键点猫选中 / 点高亮格移动 | Z 悔棋 | R 重开本关 | 通关后 SPACE 下一关")
 
-	print("[CatCatcher] M1 OK | 关卡 %d %s | 猫 %d 只 | 狗 %s @ %s | 肉 @ %s | HP %d" % [
-		level.id, level.display_name, level.cat_spawns.size(),
-		level.dog_type, str(level.dog_pos), str(level.meat_pos), controller.state.meat_hp,
-	])
-	print("[CatCatcher] 左键点猫选中 / 点高亮格移动 | Z 悔棋 | R 重开")
+	_start_level(0)
 
+
+## 载入第 index 关。重开本关也走这里。
+func _start_level(index: int) -> void:
+	_level_index = clampi(index, 0, Level.count() - 1)
+	level = Level.from_index(_level_index)
+	if level == null:
+		push_error("关卡加载失败: index %d" % _level_index)
+		return
+
+	controller.setup(level, config)
+	_selected = -1
+	_hover = Vector2i(-1, -1)
 	queue_redraw()
+
+	print("[CatCatcher] 关卡 %d/%d %s | 猫 %d 只 | 狗 %s @ %s | 肉 @ %s | HP %d" % [
+		_level_index + 1, Level.count(), level.display_name,
+		level.cat_spawns.size(), level.dog_type,
+		str(level.dog_pos), str(level.meat_pos), controller.state.meat_hp,
+	])
+
+
+func _has_next_level() -> bool:
+	return _level_index + 1 < Level.count()
 
 
 # ---------------------------------------------------------------- 绘制 ----
@@ -199,18 +216,30 @@ func _draw_hud() -> void:
 
 	_text("MEAT %d / %d" % [state.meat_hp, meat_max_hp], bar_pos + Vector2(0, 38), FONT_MID, Color(0.9, 0.87, 0.8))
 	_text("TURN %d / %d" % [state.turn, state.max_turns], bar_pos + Vector2(bar_w - 92, 38), FONT_MID, Color(0.9, 0.87, 0.8))
-	_text("LMB pick / move     Z undo     R restart", bar_pos + Vector2(0, 62), FONT_SMALL, Color(0.62, 0.58, 0.5))
+	# 只显示关卡序号，不显示 level.display_name —— 那是中文，桌面端靠系统字体回退能画，
+	# web 版不一定有回退。关名字留给文档，M4 引入中文字体后再上屏。
+	_text("LEVEL %d / %d" % [_level_index + 1, Level.count()],
+		bar_pos + Vector2(0, 62), FONT_SMALL, Color(0.78, 0.74, 0.66))
+	_text("LMB pick / move     Z undo     R restart", bar_pos + Vector2(0, 84), FONT_SMALL, Color(0.62, 0.58, 0.5))
 
 
 func _draw_result() -> void:
 	var vp := get_viewport_rect().size
 	draw_rect(Rect2(Vector2.ZERO, vp), Color(0, 0, 0, 0.66))
+
 	var headline := "YOU WIN" if controller.won else "YOU LOSE"
 	var tint := Color("#8fd17a") if controller.won else Color("#e0705e")
 	_text_centered(headline, vp.x * 0.5, vp.y * 0.5 - 12, FONT_BIG, tint)
 	_text_centered(String(REASON_TEXT.get(controller.result_reason, controller.result_reason)),
 		vp.x * 0.5, vp.y * 0.5 + 26, FONT_MID, Color(0.85, 0.82, 0.76))
-	_text_centered("press R to restart", vp.x * 0.5, vp.y * 0.5 + 58, FONT_SMALL, Color(0.62, 0.58, 0.5))
+
+	var prompt := "press R to restart"
+	if controller.won:
+		if _has_next_level():
+			prompt = "press SPACE for the next level"
+		else:
+			prompt = "all levels cleared - press R to replay"
+	_text_centered(prompt, vp.x * 0.5, vp.y * 0.5 + 58, FONT_SMALL, Color(0.62, 0.58, 0.5))
 
 
 # ---------------------------------------------------------------- 输入 ----
@@ -229,8 +258,10 @@ func _unhandled_input(event: InputEvent) -> void:
 				controller.undo()
 				_selected = -1
 			KEY_R:
-				controller.restart()
-				_selected = -1
+				_start_level(_level_index)      # 重开本关（不是从头玩）
+			KEY_SPACE:
+				if controller.finished and controller.won and _has_next_level():
+					_start_level(_level_index + 1)
 			KEY_ESCAPE:
 				_selected = -1
 		queue_redraw()

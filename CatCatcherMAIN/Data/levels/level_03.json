@@ -1,0 +1,20 @@
+{
+  "id": 3,
+  "name": "教学 · 三步收网",
+  "grid": { "w": 6, "h": 6 },
+  "meat": [0, 0],
+  "dog": { "pos": [2, 2], "type": "stray" },
+  "cats": [
+    { "pos": [5, 2], "type": "rook" },
+    { "pos": [0, 5], "type": "horse" },
+    { "pos": [4, 0], "type": "pawn" }
+  ],
+  "obstacles": [[3, 2], [3, 1]],
+  "hint": [],
+  "solution": [
+    { "cat": [5, 2], "to": [5, 1] },
+    { "cat": [0, 5], "to": [1, 3] },
+    { "cat": [5, 1], "to": [5, 0] }
+  ],
+  "max_turns": 10
+}

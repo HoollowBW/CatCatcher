@@ -5,6 +5,13 @@ extends RefCounted
 const LEVEL_DIR := "res://CatCatcherMAIN/Data/levels/"
 const CONFIG_PATH := "res://CatCatcherMAIN/Data/game_config.json"
 
+## 关卡顺序 = 通关顺序。加关卡时这里和 _EXPORT_DEPS 各补一行。
+const LEVEL_PATHS := [
+	"res://CatCatcherMAIN/Data/levels/level_01.json",
+	"res://CatCatcherMAIN/Data/levels/level_02.json",
+	"res://CatCatcherMAIN/Data/levels/level_03.json",
+]
+
 ## ⚠️ 这一坨别删，它不是死代码。
 ## 实测两件事（别再重走一遍弯路）：
 ##   1. `include_filter="*.json"` 在 headless 导出里**不生效** —— 放个 *.txt 进去也照样不进 pck；
@@ -15,6 +22,8 @@ const CONFIG_PATH := "res://CatCatcherMAIN/Data/game_config.json"
 const _EXPORT_DEPS := [
 	preload("res://CatCatcherMAIN/Data/game_config.json"),
 	preload("res://CatCatcherMAIN/Data/levels/level_01.json"),
+	preload("res://CatCatcherMAIN/Data/levels/level_02.json"),
+	preload("res://CatCatcherMAIN/Data/levels/level_03.json"),
 ]
 
 var id: int = 0
@@ -31,10 +40,32 @@ var cat_spawns: Array = []
 ## Vector2i 数组
 var obstacles: Array = []
 
-## M3 才用，格式待定（见 ARCHITECTURE 第 10 节）
+## 提示序列，元素 { "cat": [x,y], "to": [x,y] }。前几关教学用，空数组 = 交给求解器（M3）
 var hint: Array = []
 
+## 参考解法，元素同 hint 格式。**只给自检和求解器验收用，不展示给玩家**。
+## 每关必须有一条能走通的解法，selftest 会照着重放一遍 —— 这是关卡不会变成死局的保证。
+var solution: Array = []
+
 var max_turns: int = 12
+
+
+static func count() -> int:
+	return LEVEL_PATHS.size()
+
+
+static func path_at(index: int) -> String:
+	if index < 0 or index >= LEVEL_PATHS.size():
+		return ""
+	return LEVEL_PATHS[index]
+
+
+static func from_index(index: int) -> Level:
+	var p := path_at(index)
+	if p.is_empty():
+		push_error("关卡下标越界: %d" % index)
+		return null
+	return from_file(p)
 
 
 ## 读一个 JSON 成 Dictionary。
@@ -84,6 +115,7 @@ static func from_file(path: String) -> Level:
 		lv.obstacles.append(_to_cell(o))
 
 	lv.hint = d.get("hint", [])
+	lv.solution = d.get("solution", [])
 	lv.max_turns = int(d.get("max_turns", 12))
 	return lv
 

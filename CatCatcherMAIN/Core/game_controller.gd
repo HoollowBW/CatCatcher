@@ -51,40 +51,13 @@ func try_move_cat(cat_index: int, to: Vector2i) -> bool:
 	# 悔棋快照必须在动手之前拍
 	_undo.append(state.snapshot())
 
-	state.cats[cat_index]["pos"] = to
-	state.turn += 1
-
-	# ① 玩家这一步可能直接把狗围死了 —— 狗没有动作可做
-	if Encircle.is_encircled(state):
-		_finish(true, "encircled")
-		return true
-
-	# ② 狗行动
-	var action := DogAI.plan(state)
-	match String(action["kind"]):
-		"eat":
-			state.meat_hp -= _config_int("meat", "bite_damage", 3)
-		"move":
-			state.dog["pos"] = action["to"]
-		"flick":
-			var victim: int = action["cat"]
-			state.cats[victim]["pos"] = Respawn.pick_cell(state)
-		_:
-			# DogAI 说没动作 = 围死
-			_finish(true, "encircled")
-			return true
-
-	# ③ 回合末自然腐坏
-	state.meat_hp -= _config_int("meat", "decay_per_turn", 1)
-
-	# ④ 胜负
-	if state.meat_hp <= 0:
-		state.meat_hp = 0
-		_finish(false, "meat_gone")
-	elif state.turn >= state.max_turns:
-		_finish(false, "timeout")
-	else:
+	# 结算逻辑在 Rules 里，和关卡搜索/求解器共用同一份（别在这儿再抄一遍）
+	var result := Rules.apply_turn(state, config, cat_index, to)
+	var outcome := String(result["outcome"])
+	if outcome == Rules.ONGOING:
 		state_changed.emit()
+	else:
+		_finish(outcome == Rules.WON, String(result["reason"]))
 	return true
 
 
@@ -135,8 +108,3 @@ func undo() -> bool:
 	result_reason = ""
 	state_changed.emit()
 	return true
-
-
-func _config_int(section: String, key: String, fallback: int) -> int:
-	var s: Dictionary = config.get(section, {})
-	return int(s.get(key, fallback))

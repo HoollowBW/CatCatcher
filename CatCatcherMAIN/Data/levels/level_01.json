@@ -1,18 +1,19 @@
 {
   "id": 1,
-  "name": "教学 · 先堵住它的路",
+  "name": "教学 · 一招收网",
   "grid": { "w": 6, "h": 6 },
-  "meat": [2, 1],
-  "dog": { "pos": [3, 4], "type": "stray" },
+  "meat": [5, 5],
+  "dog": { "pos": [0, 0], "type": "stray" },
   "cats": [
-	{ "pos": [4, 4], "type": "rook" },
-	{ "pos": [2, 4], "type": "horse" },
-	{ "pos": [3, 5], "type": "pawn" }
+	{ "pos": [2, 1], "type": "rook" },
+	{ "pos": [4, 4], "type": "pawn" }
   ],
-  "obstacles": [[0, 5]],
+  "obstacles": [],
   "hint": [
-	{ "cat": [4, 4], "to": [4, 3] },
-	{ "cat": [4, 3], "to": [5, 3] }
+	{ "cat": [2, 1], "to": [1, 1] }
   ],
-  "max_turns": 12
+  "solution": [
+	{ "cat": [2, 1], "to": [1, 1] }
+  ],
+  "max_turns": 10
 }

@@ -1,0 +1,19 @@
+{
+  "id": 2,
+  "name": "教学 · 石缝",
+  "grid": { "w": 6, "h": 6 },
+  "meat": [0, 0],
+  "dog": { "pos": [3, 4], "type": "stray" },
+  "cats": [
+    { "pos": [5, 4], "type": "rook" },
+    { "pos": [1, 2], "type": "horse" },
+    { "pos": [3, 1], "type": "pawn" }
+  ],
+  "obstacles": [[2, 3], [2, 4], [2, 5]],
+  "hint": [],
+  "solution": [
+    { "cat": [5, 4], "to": [4, 4] },
+    { "cat": [1, 2], "to": [2, 0] }
+  ],
+  "max_turns": 12
+}
