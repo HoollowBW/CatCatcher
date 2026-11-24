@@ -14,6 +14,7 @@ func _initialize() -> void:
 	_test_move_rules()
 	_test_controlled()
 	_test_encircle()
+	_test_protection()
 	_test_dog_ai()
 	_test_respawn()
 	_test_controller()
@@ -120,10 +121,11 @@ func _test_controlled() -> void:
 
 func _test_encircle() -> void:
 	var s := _base_state()
-	# 狗(3,4) 四邻：(3,3) 空且未被控 => 唯一的可走格；(3,5)兵、(2,4)马、(4,4)车
+	# 狗(3,4) 四邻：(3,3) 空且未被控 => 唯一的可走格；
+	# 旁边 3 只猫里，马(2,4) 落在车(4,4) 的整行控制范围内 => **受保护，撞不动**
 	_eq(Encircle.movable_cells(s).size(), 1, "开局狗只有 1 个可走格")
-	_eq(Encircle.flickable_cats(s).size(), 3, "开局狗旁边有 3 只猫可撞")
-	_eq(Encircle.legal_actions(s).size(), 4, "完整动作表 = 1 走 + 3 撞")
+	_eq(Encircle.flickable_cats(s).size(), 2, "开局只有 2 只猫撞得动（马被车保护）")
+	_eq(Encircle.legal_actions(s).size(), 3, "完整动作表 = 1 走 + 2 撞")
 	if not Encircle.is_encircled(s):
 		_pass += 1
 	else:
@@ -145,6 +147,34 @@ func _test_encircle() -> void:
 		_fail += 1
 		printerr("  FAIL: 被四只猫围住必须判围死")
 	_eq(String(DogAI.plan(surrounded)["kind"]), "none", "被围住时狗没有动作")
+
+
+## 受保护的猫不能被撞飞（国际象棋那套）
+func _test_protection() -> void:
+	# 两只车并排：互相在对方的整行控制范围内 => 都受保护
+	var s := _state_with_dog_at(Vector2i(2, 2), [
+		{ "type": "rook", "pos": Vector2i(2, 3) },
+		{ "type": "rook", "pos": Vector2i(4, 3) },
+	])
+	_ok(MoveRules.is_protected(s, 0), "同一行上的车保护彼此")
+	_eq(Encircle.flickable_cats(s).size(), 0, "受保护的猫一只都撞不动")
+	if not Encircle.is_flickable(s, 0):
+		_pass += 1
+	else:
+		_fail += 1
+		printerr("  FAIL: 受保护的猫不该能撞")
+
+	# 落单的猫（队友离得远）=> 撞得动
+	var lone := _state_with_dog_at(Vector2i(2, 2), [
+		{ "type": "pawn", "pos": Vector2i(2, 3) },
+		{ "type": "pawn", "pos": Vector2i(0, 5) },
+	])
+	if not MoveRules.is_protected(lone, 0):
+		_pass += 1
+	else:
+		_fail += 1
+		printerr("  FAIL: 落单的猫不该算受保护")
+	_ok(Encircle.is_flickable(lone, 0), "落单的猫撞得动")
 
 
 func _test_dog_ai() -> void:

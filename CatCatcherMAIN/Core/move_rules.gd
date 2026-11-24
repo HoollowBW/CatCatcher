@@ -109,3 +109,17 @@ static func controlled_cells(state: GameState) -> Dictionary:
 		for cell in reach_cells(state, i):
 			out[cell] = true
 	return out
+
+
+## 这只猫是否被**别的猫保护**（它所在的格落在另一只猫的控制范围内）。
+## 国际象棋那套：被保护的棋子，狗不能撞飞。规则来源见 ARCHITECTURE。
+static func is_protected(state: GameState, cat_index: int) -> bool:
+	if cat_index < 0 or cat_index >= state.cats.size():
+		return false
+	var cell: Vector2i = state.cats[cat_index]["pos"]
+	for i in state.cats.size():
+		if i == cat_index:
+			continue
+		if reach_cells(state, i).has(cell):
+			return true
+	return false

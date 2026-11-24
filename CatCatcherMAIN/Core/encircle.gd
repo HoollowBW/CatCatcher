@@ -30,8 +30,10 @@ static func movable_cells(state: GameState) -> Array:
 	return out
 
 
-## 相邻的猫（撞飞候选）。顺序由方向表决定 => 确定性。
-## 撞飞**不是逃生路**，只是"路被这只猫挡着时把它拍飞"。
+## 相邻的、**可以被撞飞**的猫。顺序由方向表决定 => 确定性。
+##
+## ⚠️ 被别的猫保护的猫撞不动（国际象棋的"受保护棋子"，见 ARCHITECTURE）。
+## 所以站成一排互相罩着的猫，狗一只都拍不飞 —— 撞飞只对落单的猫有效。
 static func flickable_cats(state: GameState) -> Array:
 	var out := []
 	var dog: Vector2i = state.dog["pos"]
@@ -40,9 +42,22 @@ static func flickable_cats(state: GameState) -> Array:
 		if state.is_wall(cell):
 			continue
 		var cat_index := state.cat_at(cell)
-		if cat_index != -1:
-			out.append({ "cat": cat_index, "cell": cell })
+		if cat_index == -1:
+			continue
+		if MoveRules.is_protected(state, cat_index):
+			continue
+		out.append({ "cat": cat_index, "cell": cell })
 	return out
+
+
+## 这只猫现在能不能被撞飞（相邻 + 没被保护）
+static func is_flickable(state: GameState, cat_index: int) -> bool:
+	if cat_index < 0 or cat_index >= state.cats.size():
+		return false
+	var cell: Vector2i = state.cats[cat_index]["pos"]
+	if MoveRules.is_protected(state, cat_index):
+		return false
+	return absi(cell.x - state.dog["pos"].x) + absi(cell.y - state.dog["pos"].y) == 1
 
 
 ## 围死判定。独立成函数是硬要求 —— 求解器（M3）要直接调它。

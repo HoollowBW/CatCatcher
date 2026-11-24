@@ -37,10 +37,11 @@ static func plan(state: GameState) -> Dictionary:
 	if preferred.x >= 0 and movable.has(preferred):
 		return { "kind": "move", "to": preferred, "cat": -1 }
 
-	# ③ 朝肉那一步上蹲着一只猫 => 撞飞它（此时狗还有别的路，所以不算围死）
+	# ③ 朝肉那一步上蹲着一只猫 => 撞飞它（前提是狗还有别的路，所以不算围死）
+	#    ⚠️ 被队友罩着的猫撞不动，那就当它是堵墙，走 ④
 	if preferred.x >= 0:
 		var blocker := state.cat_at(preferred)
-		if blocker != -1:
+		if blocker != -1 and Encircle.is_flickable(state, blocker):
 			return { "kind": "flick", "to": preferred, "cat": blocker }
 
 	# ④ 朝肉的路被控制挡住（没人可撞）=> 挑一个离肉最近的可走格

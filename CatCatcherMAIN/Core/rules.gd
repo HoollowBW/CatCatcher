@@ -38,10 +38,14 @@ static func apply_turn(state: GameState, config: Dictionary, cat_index: int, to:
 			# DogAI 说没动作 = 围死
 			return { "outcome": WON, "reason": "encircled" }
 
-	# ③ 回合末自然腐坏
+	# ③ 狗自己把自己走死了也算赢，别等玩家再瞎走一步才结算
+	if Encircle.is_encircled(state):
+		return { "outcome": WON, "reason": "encircled" }
+
+	# ④ 回合末自然腐坏
 	state.meat_hp -= cfg_int(config, "meat", "decay_per_turn", 1)
 
-	# ④ 胜负
+	# ⑤ 胜负
 	if state.meat_hp <= 0:
 		state.meat_hp = 0
 		return { "outcome": LOST, "reason": "meat_gone" }
