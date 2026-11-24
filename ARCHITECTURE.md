@@ -36,10 +36,12 @@ CatCatcherMAIN/
     dog_ai.gd               狗的行动决策（实战与预览共用）
     game_controller.gd      回合流程 + 悔棋栈 + 胜负
   Scenes/                   表现层：节点、渲染、输入
-    board.tscn / board.gd   棋盘渲染 + 点击选格
+    board.tscn / board.gd   棋盘渲染 + 点击选格 + 控制范围 + 预览 + HUD
+  Graphics/placeholders/    占位贴图（借自隔壁 hollow-bastion，M4 整体替换）
   Data/
     game_config.json        全局数值（肉的 HP、腐坏、啃食、格子尺寸……）
     levels/level_01.json    关卡数据
+tests/selftest.gd           规则层自检（`--script` 直接跑）
 tools/                      导出与本地预览脚本（不入库产物）
 ```
 
@@ -125,14 +127,26 @@ godot --headless --main-pack build\web\index.pck --quit
 
 每个里程碑都必须**单独可验收**，验收标准写在下面，做完自查：
 
-| 里程碑 | 验收标准 |
-|---|---|
-| **M0** | 棋盘画出来、点格子有选中反馈、单位以占位方块 + 类型文字显示在正确格 |
-| **M1** | 猫能动、控制范围实时显示、狗按规则行动、围死能判赢、肉 HP 归零能判负、能重开、能悔棋、能预览狗的行动 |
-| M2 | 从 JSON 读 6 关、通关进下一关 |
-| M3 | 求解器能验证关卡有解（启动时跑）、能给提示 |
-| M4 | 视觉替换（便利贴、人脸猫、dissolve、总攻击、开场动画） |
-| M5 | Web 导出 + 部署 |
+| 里程碑 | 验收标准 | 状态 |
+|---|---|---|
+| **M0** | 棋盘画出来、点格子有选中反馈、单位以占位方块 + 类型文字显示在正确格 | ✅ |
+| **M1** | 猫能动、控制范围实时显示、狗按规则行动、围死能判赢、肉 HP 归零能判负、能重开、能悔棋、能预览狗的行动 | ✅ |
+| M2 | 从 JSON 读 6 关、通关进下一关 | |
+| M3 | 求解器能验证关卡有解（启动时跑）、能给提示 | |
+| M4 | 视觉替换（便利贴、人脸猫、dissolve、总攻击、开场动画） | |
+| M5 | Web 导出 + 部署 | |
+
+### 8.2 屏幕文案不许写在 Core 里
+
+Godot 内置字体**没有 CJK 字形**，`draw_string` 画中文在 web 版是空白/方块。
+所以 Core 只产出语言无关的 code（`encircled` / `meat_gone` / `timeout`），
+显示文字由表现层的 `REASON_TEXT` 映射。Core 一旦开始拼屏幕句子，就等着在 web 版看空白吧。
+
+`tests/selftest.gd` 是规则层的验收闸门，改完 `Core/` 必须跑：
+
+```powershell
+godot --headless --path . --script res://tests/selftest.gd   # 退出码 0 = 全过
+```
 
 ### 8.1 撞飞/扫中后猫去哪：动态投放（已定稿）
 

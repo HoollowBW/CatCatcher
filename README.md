@@ -38,6 +38,9 @@ build/web/         导出产物（gitignore + .gdignore，不入库）
 改完 Core 或数据层，跑这两个：
 
 ```powershell
+# 规则层自检（改完 Core/ 必跑），退出码 0 = 全过
+godot --headless --path . --script res://tests/selftest.gd
+
 # 启动自检：打印关卡加载结果
 godot --headless --path . --quit
 
@@ -47,6 +50,11 @@ godot --headless --main-pack build\web\index.pck --quit
 # 不开编辑器也能看到画面：Godot 自带的 movie writer 会写出 PNG 序列
 godot --path . --write-movie "$env:TEMP\shot\f.png" --fixed-fps 30 --quit-after 3
 ```
+
+## 操作（M1）
+
+左键点猫选中 → 悬停可落格看敌方行动预览 → 点格子移动（狗会立刻行动）。
+<kbd>Z</kbd> 悔棋（一次撤一整个回合），<kbd>R</kbd> 重开，<kbd>Esc</kbd> 取消选中。
 
 ## 技术
 

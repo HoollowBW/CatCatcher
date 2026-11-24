@@ -62,9 +62,15 @@ func in_bounds(cell: Vector2i) -> bool:
 	return cell.x >= 0 and cell.y >= 0 and cell.x < w and cell.y < h
 
 
-## 出界或障碍 = 谁都不能站上去
+## 出界或障碍 = 地形上不能站
 func is_wall(cell: Vector2i) -> bool:
 	return not in_bounds(cell) or obstacles.has(cell)
+
+
+## 谁都不能站的格 = 地形墙 + 肉所在格。
+## 肉自己占一格，狗只能"相邻啃食"，不能站上去；猫也一样，否则肉会被走法色块盖住。
+func is_blocked(cell: Vector2i) -> bool:
+	return is_wall(cell) or cell == meat_pos
 
 
 ## 该格上的猫下标；没有返回 -1

@@ -5,14 +5,14 @@
   "meat": [2, 1],
   "dog": { "pos": [3, 4], "type": "stray" },
   "cats": [
-    { "pos": [4, 4], "type": "rook" },
-    { "pos": [2, 4], "type": "horse" },
-    { "pos": [3, 5], "type": "pawn" }
+	{ "pos": [4, 4], "type": "rook" },
+	{ "pos": [2, 4], "type": "horse" },
+	{ "pos": [3, 5], "type": "pawn" }
   ],
   "obstacles": [[0, 5]],
   "hint": [
-    { "cat": [4, 4], "to": [4, 3] },
-    { "cat": [4, 3], "to": [5, 3] }
+	{ "cat": [4, 4], "to": [4, 3] },
+	{ "cat": [4, 3], "to": [5, 3] }
   ],
   "max_turns": 12
 }
