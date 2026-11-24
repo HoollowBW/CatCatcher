@@ -10,3 +10,8 @@ build/*
 # 兜底：任何地方漏网的构建产物
 *.wasm
 *.pck
+
+# 例外：docs/ 是 GitHub Pages 的发布目录，必须入库（wasm 已压成 9.65MB，不是 37.7MB）
+# 由 tools/deploy.ps1 生成；要更新线上版就重跑它再一次 commit + push
+!docs/index.wasm
+!docs/index.pck

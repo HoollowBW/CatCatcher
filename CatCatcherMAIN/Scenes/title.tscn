@@ -1,0 +1,45 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="Script" path="res://CatCatcherMAIN/Scenes/title.gd" id="1_title"]
+[ext_resource type="PackedScene" path="res://CatCatcherMAIN/Characters/Dogs/dog_stray.tscn" id="2_dog"]
+[ext_resource type="PackedScene" path="res://CatCatcherMAIN/Characters/Meat/meat.tscn" id="3_meat"]
+[ext_resource type="PackedScene" path="res://CatCatcherMAIN/Characters/Cats/cat_rook.tscn" id="4_rook"]
+[ext_resource type="PackedScene" path="res://CatCatcherMAIN/Characters/Cats/cat_pawn.tscn" id="5_pawn"]
+
+[node name="Title" type="Node2D"]
+script = ExtResource("1_title")
+
+[node name="Units" type="Node2D" parent="."]
+
+[node name="Dog" parent="Units" instance=ExtResource("2_dog")]
+
+[node name="Meat" parent="Units" instance=ExtResource("3_meat")]
+
+[node name="CatRook" parent="Units" instance=ExtResource("4_rook")]
+
+[node name="CatPawn" parent="Units" instance=ExtResource("5_pawn")]
+
+[node name="FxLayer" type="CanvasLayer" parent="."]
+layer = 5
+
+[node name="Flash" type="ColorRect" parent="FxLayer"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(1, 1, 1, 0)
+
+[node name="Banner" type="Label" parent="FxLayer"]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+theme_override_colors/font_color = Color(1, 0.956863, 0.839216, 1)
+theme_override_font_sizes/font_size = 52
+text = "ENCIRCLED!"
+horizontal_alignment = 1
+vertical_alignment = 1
