@@ -245,6 +245,29 @@ godot --headless --path . --script res://tests/selftest.gd   # 退出码 0 = 全
 只按 Core 算出的格子坐标去 `position = ...` 挪它们（`_sync_units()`）。
 换美术 = 改 `Characters/` 里的场景，一行 board 代码都不用动。
 
+### 8.7 层级：子节点永远压在父节点的 `_draw()` 之上
+
+单位成了 board 的子节点之后有一串连带后果，踩过一次别再踩：
+
+- **结算界面不能用 `_draw()` 画** —— 遮罩会被障碍物和猫盖住。用 `CanvasLayer`（永远在最上层）
+  + `ColorRect` / `Label`，见 `_build_result_layer()`。
+- 什么时候单独跑某一关：在编辑器里对 `Levels/level_XX.tscn` 按 **F6**。关卡场景在 `_ready`
+  发现 `current_scene == self` 就把路径写进 `RunRequest` 再切到棋盘，棋盘据此决定从第几关开始。
+- ⚠️ **`level.gd` 不许引用 `Levels`**：`levels.gd` preload 关卡场景、场景 ext_resource 了
+  `level.gd`，`level.gd` 再引用 `Levels` 就成环，Godot 报 `Parse Error: Busy` /
+  `referenced non-existent resource`。所以才有那个什么也不 preload 的 `RunRequest`。
+
+### 8.8 威胁范围预览
+
+鼠标停在一个**可走的格子**上时（选中了猫就用选中的；没选中时如果只有一只猫能走到那就自动用它，
+多只都能走到就不猜），显示两段信息：
+
+- 橙箭头 + 橙圈 = 狗**这一回合**会做什么（`preview_after` → `DogAI.plan`）
+- 橙色块 = **威胁范围**：把这一步真的 `Rules.apply_turn` 走一遍，再取 `Encircle.legal_actions`
+  —— 也就是狗下回合能碰到哪些格
+
+全是 Core 的现成函数，没有第二套预测逻辑。
+
 ## 9. 明确不做（别自作主张加）
 - ❌ 血量 / 伤害 / 攻击力系统（肉的 HP 是倒计时，不是战斗）
 - ❌ 自由组队、抽卡、养成、背包

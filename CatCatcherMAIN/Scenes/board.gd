@@ -36,6 +36,12 @@ var _cat_nodes: Array = []          # 顺序必须和 controller.state.cats 一�
 var _dog_node: Node2D = null
 var _meat_node: Node2D = null
 
+## ---- 结算界面（CanvasLayer，永远在最上层）----
+var _result_layer: CanvasLayer = null
+var _result_title: Label = null
+var _result_reason: Label = null
+var _result_prompt: Label = null
+
 ## 选中的猫下标，-1 = 没选中
 var _selected: int = -1
 ## 鼠标下的格子，(-1,-1) = 不在棋盘上
@@ -69,7 +75,8 @@ func _ready() -> void:
 	controller.game_over.connect(_on_game_over)
 
 	RenderingServer.set_default_clear_color(_color("bg"))
-	print("[CatCatcher] 左键点猫选中 / 点高亮格移动 | Z 悔棋 | R 重开本关 | 通关后 SPACE 下一关")
+	_build_result_layer()
+	print("[CatCatcher] 左键点猫选中 / 悬停格子看威胁范围 | 点高亮格移动 | Z 悔棋 | R 重开 | 通关后 SPACE 下一关")
 
 	# 启动校验：每关都必须有解（求解器真搜，不是读标准答案糊弄）
 	var problems := Levels.validate_all(config)
@@ -78,7 +85,10 @@ func _ready() -> void:
 	if problems.is_empty():
 		print("[CatCatcher] 关卡校验通过（%d 关全部有解）" % Levels.count())
 
-	_start_level(0)
+	# 从编辑器里 F6 单独跑某一关时，关卡场景会先把路径写进 RunRequest
+	var start := Levels.index_of_path(RunRequest.level_path)
+	RunRequest.level_path = ""
+	_start_level(maxi(start, 0))
 
 
 ## 载入第 index 关。重开本关也走这里。
@@ -122,6 +132,7 @@ func _start_level(index: int) -> void:
 	_bump_version()
 	_update_hint()
 	_sync_units()
+	_hide_result()
 	queue_redraw()
 
 	print("[CatCatcher] 关卡 %d/%d %s | 猫 %d 只 | 狗 %s @ %s | 肉 @ %s | HP %d" % [
@@ -231,9 +242,8 @@ func _draw() -> void:
 	_draw_selection()
 	_draw_hint()
 	_draw_hud()
-
-	if controller.finished:
-		_draw_result()
+	# 结算界面不在这里画 —— 单位是场景子节点，会盖住 _draw() 的内容。
+	# 结算用 CanvasLayer（永远在最上层），见 _build_result_layer。
 
 
 func _draw_cells() -> void:
@@ -273,37 +283,74 @@ func _draw_dog_warning(controlled: Dictionary) -> void:
 	draw_rect(_cell_rect(dog_cell), Color(String(dog_cfg.get("warning_outline", "#e03e3e"))), false, width)
 
 
-## 敌方行动预览：选中猫 + 悬停在某个可落格上时，显示狗下一步会干什么。
-## 走的是 GameController.preview_after -> DogAI.plan，和实战同一个函数。
+## 敌方行动预览 + 威胁范围：鼠标停在一个可走的格子上就显示。
+##
+## 显示三样东西：
+##   ① 橙色箭头 = 狗这一回合会干什么（走 / 撞飞 / 啃肉）
+##   ② 橙圈     = 那个动作的落点
+##   ③ 红色格子 = **狗下一步还能碰到的地方**（威胁范围）—— 落点确定后，它下回合的合法动作格
+##
+## 全部走 Core 的同一套函数（DogAI.plan / Rules.apply_turn / Encircle.legal_actions），
+## 不是另写一套预测逻辑，所以永远和实战一致。
 func _draw_preview() -> void:
-	if controller.finished or _selected < 0 or _hover.x < 0:
+	if controller.finished or _hover.x < 0:
 		return
-	if not MoveRules.legal_moves(controller.state, _selected).has(_hover):
-		return
-
-	var preview := controller.preview_after(_selected, _hover)
-	if preview.is_empty():
-		return
-
-	var kind := String(preview["kind"])
-	if kind == "none":
+	var cat_index := _preview_cat_index()
+	if cat_index < 0:
 		return
 
 	var warn := Color("#e07a3e")
+
+	# ① 狗这一回合的动作
+	var preview := controller.preview_after(cat_index, _hover)
+	if preview.is_empty():
+		return
+	var kind := String(preview["kind"])
 
 	if kind == "encircled":
 		var dog_rect := _cell_rect(controller.state.dog["pos"])
 		_text_centered("ENCIRCLED", dog_rect.get_center().x, dog_rect.position.y - 8, FONT_MID, Color("#7fb069"))
 		return
+	if kind == "none":
+		return
 
 	var target: Vector2i = preview["to"]
 	if kind == "eat":
 		target = controller.state.meat_pos
-
 	var from := _cell_rect(controller.state.dog["pos"]).get_center()
 	var to := _cell_rect(target).get_center()
+
+	# ③ 威胁范围：把这一步真的走一遍，看狗**再下一步**能碰到哪些格
+	var sim := controller.state.clone()
+	var outcome := String(Rules.apply_turn(sim, config, cat_index, _hover)["outcome"])
+	if outcome != Rules.WON:
+		var threat_fill := Color(warn.r, warn.g, warn.b, 0.26)
+		for action in Encircle.legal_actions(sim):
+			var threat_cell: Vector2i = action["to"]
+			draw_rect(_cell_rect(threat_cell), threat_fill)
+			draw_rect(_cell_rect(threat_cell).grow(-2), warn, false, 2.0)
+
+	# ② 箭头和落点画在威胁范围之上
 	draw_line(from, to, warn, 3.0)
 	draw_arc(to, cell_size * 0.32, 0.0, TAU, 24, warn, 3.0)
+
+
+## 这次预览算哪只猫的：
+## 选中了就用选中的；没选中时，如果**只有一只**猫能走到这一格，就自动用它。
+## 多只猫都能走到（车和马经常重叠）就不猜 —— 猜错了比不给更糟。
+func _preview_cat_index() -> int:
+	if _selected >= 0:
+		if MoveRules.legal_moves(controller.state, _selected).has(_hover):
+			return _selected
+		return -1
+
+	var found := -1
+	for i in controller.state.cats.size():
+		if MoveRules.legal_moves(controller.state, i).has(_hover):
+			if found >= 0:
+				return -1
+			found = i
+	return found
 
 
 func _draw_selection() -> void:
@@ -356,15 +403,55 @@ func _draw_hud() -> void:
 		_text("-> (%d,%d)" % [to_cell.x, to_cell.y], bar_pos + Vector2(bar_w + 24, 44), FONT_SMALL, Color(0.85, 0.82, 0.76))
 
 
-func _draw_result() -> void:
-	var vp := get_viewport_rect().size
-	draw_rect(Rect2(Vector2.ZERO, vp), Color(0, 0, 0, 0.66))
+# ------------------------------------------------------------ 结算界面 ----
+#
+# ⚠️ 结算界面**不能**画在 _draw() 里：单位现在是关卡场景的子节点，子节点永远画在
+# 父节点自己的 _draw() 之上 —— 遮罩会被障碍物和猫盖住（踩过）。
+# 所以用 CanvasLayer（永远在最上层的原生命名空间），里面放 ColorRect + Label。
 
-	var headline := "YOU WIN" if controller.won else "YOU LOSE"
-	var tint := Color("#8fd17a") if controller.won else Color("#e0705e")
-	_text_centered(headline, vp.x * 0.5, vp.y * 0.5 - 12, FONT_BIG, tint)
-	_text_centered(String(REASON_TEXT.get(controller.result_reason, controller.result_reason)),
-		vp.x * 0.5, vp.y * 0.5 + 26, FONT_MID, Color(0.85, 0.82, 0.76))
+func _build_result_layer() -> void:
+	_result_layer = CanvasLayer.new()
+	_result_layer.layer = 10
+	_result_layer.visible = false
+	add_child(_result_layer)
+
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.66)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_result_layer.add_child(dim)
+
+	# 960x540 基准分辨率下的三条横带
+	_result_title = _make_result_label(215, 44, 30, Color.WHITE)
+	_result_reason = _make_result_label(262, 28, FONT_MID, Color(0.85, 0.82, 0.76))
+	_result_prompt = _make_result_label(300, 24, FONT_SMALL, Color(0.62, 0.58, 0.5))
+
+
+## 一条占满整个视口宽度的横带，文字居中。
+func _make_result_label(top: int, height: int, size: int, tint: Color) -> Label:
+	var l := Label.new()
+	l.anchor_left = 0.0
+	l.anchor_right = 1.0
+	l.offset_left = 0.0
+	l.offset_right = 0.0
+	l.offset_top = float(top)
+	l.offset_bottom = float(top + height)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	l.add_theme_font_size_override("font_size", size)
+	l.add_theme_color_override("font_color", tint)
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_result_layer.add_child(l)
+	return l
+
+
+func _show_result() -> void:
+	if _result_layer == null:
+		return
+	_result_title.text = "YOU WIN" if controller.won else "YOU LOSE"
+	_result_title.add_theme_color_override("font_color",
+		Color("#8fd17a") if controller.won else Color("#e0705e"))
+	_result_reason.text = String(REASON_TEXT.get(controller.result_reason, controller.result_reason))
 
 	var prompt := "press R to restart"
 	if controller.won:
@@ -372,7 +459,13 @@ func _draw_result() -> void:
 			prompt = "press SPACE for the next level"
 		else:
 			prompt = "all levels cleared - press R to replay"
-	_text_centered(prompt, vp.x * 0.5, vp.y * 0.5 + 58, FONT_SMALL, Color(0.62, 0.58, 0.5))
+	_result_prompt.text = prompt
+	_result_layer.visible = true
+
+
+func _hide_result() -> void:
+	if _result_layer != null:
+		_result_layer.visible = false
 
 
 # ---------------------------------------------------------------- 输入 ----
@@ -393,6 +486,8 @@ func _unhandled_input(event: InputEvent) -> void:
 				_selected = -1
 				_bump_version()
 				_update_hint()
+				_hide_result()      # 悔棋可能把"已经结束"的局面悔回去
+				_sync_units()
 			KEY_R:
 				_start_level(_level_index)      # 重开本关（不是从头玩）
 			KEY_SPACE:
@@ -430,6 +525,7 @@ func _on_game_over(is_win: bool, _reason: String) -> void:
 	_selected = -1
 	if not is_win:
 		_fail_count += 1
+	_show_result()
 	queue_redraw()
 
 

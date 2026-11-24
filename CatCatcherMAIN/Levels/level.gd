@@ -34,6 +34,15 @@ func _ready() -> void:
 	_ensure_geometry()
 	if Engine.is_editor_hint():
 		queue_redraw()
+		return
+
+	# 在编辑器里对**本场景**按 F6 => current_scene 就是自己 => 记下路径再切到棋盘。
+	# 棋盘把本场景当子节点实例化时 current_scene 是棋盘，这条不会触发。
+	# ⚠️ 这里只能碰 RunRequest，不许引用 Levels —— 否则成环（见 run_request.gd）
+	if get_tree() != null and get_tree().current_scene == self:
+		RunRequest.level_path = scene_file_path
+		print("[关卡] 直接运行 %s" % name)
+		get_tree().change_scene_to_file.call_deferred("res://CatCatcherMAIN/Scenes/board.tscn")
 
 
 func _process(_delta: float) -> void:

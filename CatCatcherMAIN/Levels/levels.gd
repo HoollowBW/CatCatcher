@@ -11,9 +11,20 @@ const SCENES := [
 	preload("res://CatCatcherMAIN/Levels/level_03.tscn"),
 ]
 
+## 在编辑器里 F6 单独跑某一关时，关卡场景会先把路径写进 RunRequest（见 run_request.gd），
+## 棋盘用 index_of_path() 换算成下标。默认 -1 = 从第 1 关开始。
+
 
 static func count() -> int:
 	return SCENES.size()
+
+
+## 场景路径 -> 关卡下标，找不到返回 -1
+static func index_of_path(path: String) -> int:
+	for i in SCENES.size():
+		if SCENES[i] != null and SCENES[i].resource_path == path:
+			return i
+	return -1
 
 
 ## 实例化一关、收数据、把节点扔掉。只想要数据时用它。
