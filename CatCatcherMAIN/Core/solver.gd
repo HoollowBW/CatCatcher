@@ -74,26 +74,6 @@ static func _search(state: GameState, config: Dictionary, depth: int, seen: Dict
 			if not tail.is_empty():
 				return ([step] + tail)
 
-	# 驱赶也是玩家的一种行动：狗被赶走后本回合不再动，等于白送它一回合。
-	# 解法里用 cat=[-1,-1] 表示"驱赶"，to 是狗被赶到的格（表现层认得这个约定）。
-	if Encircle.can_shove(state):
-		budget[0] = int(budget[0]) - 1
-		if int(budget[0]) <= 0:
-			return []
-		var shoved := state.clone()
-		shoved.turn += 1
-		var shove_outcome := String(Rules.apply_shove(shoved, config)["outcome"])
-		var shove_step := { "cat": [-1, -1], "to": [shoved.dog["pos"].x, shoved.dog["pos"].y] }
-		if shove_outcome == Rules.WON:
-			return [shove_step]
-		if shove_outcome != Rules.LOST:
-			var shove_key := _fingerprint(shoved)
-			if not (seen.has(shove_key) and int(seen[shove_key]) >= depth - 1):
-				seen[shove_key] = depth - 1
-				var shove_tail := _search(shoved, config, depth - 1, seen, budget)
-				if not shove_tail.is_empty():
-					return ([shove_step] + shove_tail)
-
 	return []
 
 

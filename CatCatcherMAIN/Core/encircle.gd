@@ -77,12 +77,13 @@ static func meat_action(state: GameState) -> Dictionary:
 	return { "kind": "growl", "to": dog, "cat": -1 }
 
 
-## 【驱赶】玩家点狗所在格 = 逼它换个落脚点（逃跑就是它这一回合的行动）。
-## 三个条件缺一不可：
+## 【逃跑】狗的本能，不是玩家的操作：只要它脚下那格被某只猫控制（"被攻击"），
+## 它就会自己跑到安全格去，而不是继续朝肉走。三个条件缺一不可：
 ##   ① 狗脚下那格被某只猫控制（界面上那格是绿的）
-##   ② 它还有空可走（没得跑就赶不动）
-##   ③ 它吃不到旁边的猫（能反吃的狗不会乖乖走）
-static func can_shove(state: GameState) -> bool:
+##   ② 它还有空可走（没得跑就只能干挨着）
+##   ③ 它吃不到旁边的猫（能反吃的狗先吃，不跑）
+## 这就是玩家"驱赶"狗的手段：用控制范围把它逼向角落。
+static func can_flee(state: GameState) -> bool:
 	if not MoveRules.controlled_cells(state).has(state.dog["pos"]):
 		return false
 	if movable_cells(state).is_empty():
@@ -92,9 +93,9 @@ static func can_shove(state: GameState) -> bool:
 	return true
 
 
-## 狗会被赶到哪个格：优先"逃路最多"的（安全格），其次离肉更远，最后按方向表顺序。
+## 狗会跑到哪个格：优先"逃路最多"的（安全格），其次离肉更远，最后按方向表顺序。
 ## 全确定性 —— 预览和实战必须给同一个答案。
-static func shove_target(state: GameState) -> Vector2i:
+static func flee_target(state: GameState) -> Vector2i:
 	var best := Vector2i(-1, -1)
 	var best_safe := -1
 	var best_far := -1

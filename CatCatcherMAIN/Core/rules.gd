@@ -41,6 +41,10 @@ static func apply_dog_turn(state: GameState, config: Dictionary) -> Dictionary:
 			return { "outcome": LOST, "reason": "meat_eaten" }
 		"growl":
 			state.growling = true
+		"flee":
+			# 脚下被控制 => 自己跑到安全格。逃跑也算它的动作，低吼清零
+			state.dog["pos"] = action["to"]
+			state.growling = false
 		"move":
 			state.dog["pos"] = action["to"]
 			state.growling = false
@@ -56,16 +60,6 @@ static func apply_dog_turn(state: GameState, config: Dictionary) -> Dictionary:
 			return { "outcome": WON, "reason": "encircled" }
 
 	# ③ 狗自己把自己走死了也算赢；④ 回合上限
-	return settle(state, config)
-
-
-## 驱赶：玩家把狗逼离它脚下的格。**逃跑就是狗这一回合的行动**，所以它本回合不再做别的；
-## 低吼清零（前摇要重来）。落点由 Encircle.shove_target 决定（安全格优先，确定性）。
-static func apply_shove(state: GameState, config: Dictionary) -> Dictionary:
-	var to := Encircle.shove_target(state)
-	if to.x >= 0:
-		state.dog["pos"] = to
-	state.growling = false
 	return settle(state, config)
 
 

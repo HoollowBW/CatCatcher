@@ -18,10 +18,8 @@ var result_reason := ""
 
 ## 每回合开始前的快照，撤销一次 = 退回上一个已提交回合
 var _undo: Array = []
-## 本回合玩家是否已经走过一步（或驱赶过一次）
+## 本回合玩家是否已经走过一步
 var _moved := false
-## 本回合玩家选的是"驱赶"—— 狗的逃跑就是它的行动，结算时不再让它多走一步
-var _shoved := false
 
 
 func setup(lv: Level, cfg: Dictionary) -> void:
@@ -36,7 +34,6 @@ func restart() -> void:
 	state = level.to_state(config)
 	_undo.clear()
 	_moved = false
-	_shoved = false
 	finished = false
 	won = false
 	result_reason = ""
@@ -62,30 +59,7 @@ func move_cat(cat_index: int, to: Vector2i) -> bool:
 
 
 func has_moved() -> bool:
-	return _moved or _shoved
-
-
-## 现在能不能驱赶（界面用它决定要不要把狗圈出来）
-func can_shove() -> bool:
-	if finished or state == null or _moved or _shoved:
-		return false
-	return Encircle.can_shove(state)
-
-
-## 驱赶：把狗逼离脚下那格（试探性，和走猫一样可以撤销）。
-## 狗本回合不再行动 —— 逃跑就是它的行动。
-func shove() -> bool:
-	if not can_shove():
-		return false
-	var to := Encircle.shove_target(state)
-	if to.x < 0:
-		return false
-	_undo.append(state.snapshot())
-	state.dog["pos"] = to
-	state.growling = false
-	_shoved = true
-	state_changed.emit()
-	return true
+	return _moved
 
 
 ## 撤销这一步（可以连撤，一直退回开局）
@@ -94,7 +68,6 @@ func undo() -> bool:
 		return false
 	state.restore(_undo.pop_back())
 	_moved = false
-	_shoved = false
 	finished = false
 	won = false
 	result_reason = ""
@@ -102,19 +75,14 @@ func undo() -> bool:
 	return true
 
 
-## 提交本回合：狗行动 + 结算。（本回合是驱赶的话，狗已经跑过了，只结算）
+## 提交本回合：狗行动 + 结算。
 func end_turn() -> bool:
-	if finished or state == null or not has_moved():
+	if finished or state == null or not _moved:
 		return false
 
 	state.turn += 1
-	var result: Dictionary
-	if _shoved:
-		result = Rules.settle(state, config)
-	else:
-		result = Rules.apply_dog_turn(state, config)
+	var result := Rules.apply_dog_turn(state, config)
 	_moved = false
-	_shoved = false
 
 	var outcome := String(result["outcome"])
 	if outcome == Rules.ONGOING:

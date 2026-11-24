@@ -311,6 +311,11 @@ func _draw_dog_warning(controlled: Dictionary) -> void:
 
 	if controlled.has(dog_cell):
 		draw_rect(_cell_rect(dog_cell), Color(String(dog_cfg.get("warning_outline", "#e03e3e"))), false, width)
+		# 罩住狗站的格 => 它下回合会自己跑掉（这是玩家"驱赶"狗的唯一手段）
+		if not controller.finished:
+			_text_centered("FLEE", _cell_rect(dog_cell).get_center().x,
+				_cell_rect(dog_cell).position.y - 8.0, FONT_SMALL,
+				Color(String(dog_cfg.get("warning_outline", "#e03e3e"))))
 
 	var d: Vector2i = dog_cell - state.meat_pos
 	if absi(d.x) + absi(d.y) == 1:
@@ -318,12 +323,6 @@ func _draw_dog_warning(controlled: Dictionary) -> void:
 		draw_rect(meat_rect, _color("growl"), false, width if state.growling else 2.0)
 		if state.growling:
 			_text_centered("EAT!", meat_rect.get_center().x, meat_rect.position.y - 8, FONT_MID, _color("growl"))
-
-	# 可以驱赶 => 把狗框出来（点它就把狗赶走）
-	if not controller.finished and controller.can_shove():
-		var dog_rect := _cell_rect(dog_cell).grow(-3)
-		draw_rect(dog_rect, _color("selected"), false, 3.0)
-		_text_centered("SHOVE", dog_rect.get_center().x, dog_rect.end.y - 4.0, FONT_SMALL, _color("selected"))
 
 
 ## 敌方行动预览 + 威胁范围：鼠标停在一个可走的格子上就显示。
@@ -359,6 +358,14 @@ func _draw_preview() -> void:
 	if kind == "growl":
 		var growl_rect := _cell_rect(controller.state.dog["pos"])
 		_text_centered("GROWL", growl_rect.get_center().x, growl_rect.position.y - 8, FONT_MID, warn)
+		return
+	if kind == "flee":
+		# 罩住它站的格 => 它下回合会往安全格跑
+		var flee_to := _cell_rect(preview["to"]).get_center()
+		var flee_from := _cell_rect(controller.state.dog["pos"]).get_center()
+		draw_line(flee_from, flee_to, warn, 3.0)
+		draw_arc(flee_to, cell_size * 0.32, 0.0, TAU, 24, warn, 3.0)
+		_text_centered("FLEE", flee_from.x, _cell_rect(controller.state.dog["pos"]).position.y - 8, FONT_SMALL, warn)
 		return
 
 	var target: Vector2i = preview["to"]
@@ -414,13 +421,6 @@ func _draw_hint() -> void:
 		return
 
 	var cat_cell := _hint_cell(_hint_step["cat"])
-	if cat_cell.x < 0:
-		# 驱赶提示：圈住狗（cat=[-1,-1] 是求解器约定的"驱赶"记法）
-		var dog_rect := _cell_rect(controller.state.dog["pos"])
-		draw_arc(dog_rect.get_center(), cell_size * 0.40, 0.0, TAU, 28, _color("hint"), 3.0)
-		_text_centered("SHOVE", dog_rect.get_center().x, dog_rect.position.y - 8.0, FONT_SMALL, _color("hint"))
-		return
-
 	var from := _cell_rect(cat_cell).get_center()
 	var to := _cell_rect(_hint_cell(_hint_step["to"])).get_center()
 	var fill := _color("hint")
@@ -538,8 +538,8 @@ func _draw_hud() -> void:
 		if state.growling:
 			_text("THE DOG IS GROWLING - COVER THE MEAT!",
 				bar_pos + Vector2(0, 46), FONT_SMALL, _color("growl"))
-		elif controller.can_shove():
-			_text("or CLICK THE DOG to drive it off",
+		elif Encircle.can_flee(state):
+			_text("covering the dog makes it run - herd it into a corner",
 				bar_pos + Vector2(0, 46), FONT_SMALL, _color("selected"))
 
 	_text("LMB pick / move     Z undo     R restart", bar_pos + Vector2(0, 84), FONT_SMALL, Color(0.62, 0.58, 0.5))
@@ -549,13 +549,8 @@ func _draw_hud() -> void:
 		var cat_cell := _hint_cell(_hint_step["cat"])
 		var to_cell := _hint_cell(_hint_step["to"])
 		_text("HINT", bar_pos + Vector2(bar_w + 24, 6), FONT_SMALL, _color("hint"))
-		if cat_cell.x < 0:
-			# 求解器给的下一步是"驱赶"
-			_text("SHOVE THE DOG", bar_pos + Vector2(bar_w + 24, 26), FONT_SMALL, Color(0.85, 0.82, 0.76))
-			_text("dog -> (%d,%d)" % [to_cell.x, to_cell.y], bar_pos + Vector2(bar_w + 24, 44), FONT_SMALL, Color(0.85, 0.82, 0.76))
-		else:
-			_text("(%d,%d)" % [cat_cell.x, cat_cell.y], bar_pos + Vector2(bar_w + 24, 26), FONT_SMALL, Color(0.85, 0.82, 0.76))
-			_text("-> (%d,%d)" % [to_cell.x, to_cell.y], bar_pos + Vector2(bar_w + 24, 44), FONT_SMALL, Color(0.85, 0.82, 0.76))
+		_text("(%d,%d)" % [cat_cell.x, cat_cell.y], bar_pos + Vector2(bar_w + 24, 26), FONT_SMALL, Color(0.85, 0.82, 0.76))
+		_text("-> (%d,%d)" % [to_cell.x, to_cell.y], bar_pos + Vector2(bar_w + 24, 44), FONT_SMALL, Color(0.85, 0.82, 0.76))
 
 
 # ------------------------------------------------------------ 演出（无美术）----
@@ -818,17 +813,6 @@ func _unhandled_input(event: InputEvent) -> void:
 			_selected = -1
 			_bump_version()
 			_update_hint()
-			queue_redraw()
-			return
-
-	# 点狗 = 驱赶：狗脚下那格被控制时才成立，逃跑就是它这一回合的行动
-	if not controller.finished and cell == controller.state.dog["pos"] and controller.can_shove():
-		if controller.shove():
-			_selected = -1
-			_bump_version()
-			_update_hint()
-			_sync_units()
-			_shake(0.2, 4.0)
 			queue_redraw()
 			return
 
