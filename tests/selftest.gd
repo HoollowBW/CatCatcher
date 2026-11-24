@@ -45,6 +45,21 @@ func _base_state() -> GameState:
 	return s
 
 
+## 造一个"狗在 dog_cell、其余按 cats 摆"的干净局面（6x6，肉放 (5,5) 免得蹭到）
+func _state_with_dog_at(dog_cell: Vector2i, cats: Array) -> GameState:
+	var s := GameState.new()
+	s.w = 6
+	s.h = 6
+	s.meat_pos = Vector2i(5, 5)
+	s.meat_hp = 20
+	s.max_turns = 12
+	s.dog = { "type": "stray", "pos": dog_cell }
+	s.cats = []
+	for c in cats:
+		s.cats.append({ "type": String(c["type"]), "pos": c["pos"] })
+	return s
+
+
 func _controller_for(state: GameState) -> GameController:
 	var lv := Level.new()
 	lv.w = state.w
@@ -105,14 +120,31 @@ func _test_controlled() -> void:
 
 func _test_encircle() -> void:
 	var s := _base_state()
-	var actions := Encircle.legal_actions(s)
-	# 狗(3,4) 四邻：(3,3) 空可走；(3,5)兵、(2,4)马、(4,4)车 => 3 个撞飞
-	_eq(actions.size(), 4, "开局狗有 4 个合法动作")
+	# 狗(3,4) 四邻：(3,3) 空且未被控 => 唯一的可走格；(3,5)兵、(2,4)马、(4,4)车
+	_eq(Encircle.movable_cells(s).size(), 1, "开局狗只有 1 个可走格")
+	_eq(Encircle.flickable_cats(s).size(), 3, "开局狗旁边有 3 只猫可撞")
+	_eq(Encircle.legal_actions(s).size(), 4, "完整动作表 = 1 走 + 3 撞")
 	if not Encircle.is_encircled(s):
 		_pass += 1
 	else:
 		_fail += 1
 		printerr("  FAIL: 开局不该是围死")
+
+	# 【回归】四邻全被猫堵死 => 必须判围死。
+	# 早先"相邻有猫就还能撞飞"的写法会让玩家看着明明困死了却不结算。
+	var surrounded := _state_with_dog_at(Vector2i(2, 2), [
+		{ "type": "pawn", "pos": Vector2i(2, 1) },
+		{ "type": "pawn", "pos": Vector2i(2, 3) },
+		{ "type": "pawn", "pos": Vector2i(1, 2) },
+		{ "type": "pawn", "pos": Vector2i(3, 2) },
+	])
+	_eq(Encircle.movable_cells(surrounded).size(), 0, "四邻全是猫时没有可走格")
+	if Encircle.is_encircled(surrounded):
+		_pass += 1
+	else:
+		_fail += 1
+		printerr("  FAIL: 被四只猫围住必须判围死")
+	_eq(String(DogAI.plan(surrounded)["kind"]), "none", "被围住时狗没有动作")
 
 
 func _test_dog_ai() -> void:
@@ -127,16 +159,14 @@ func _test_dog_ai() -> void:
 	s2.cats = []
 	_eq(String(DogAI.plan(s2)["kind"]), "eat", "相邻肉时优先啃食")
 
-	# 四邻全被控/被占，只剩撞飞
-	var s3 := _base_state()
-	s3.cats = [
-		{ "type": "rook", "pos": Vector2i(3, 3) },   # 正上方有猫
-		{ "type": "rook", "pos": Vector2i(0, 4) },   # 控制左方 (2,4)
-		{ "type": "rook", "pos": Vector2i(4, 0) },   # 控制 (4,4)
-		{ "type": "rook", "pos": Vector2i(0, 5) },   # 控制下方？(3,5) 不在其行列
-	]
-	var p3 := DogAI.plan(s3)
-	_ok(String(p3["kind"]) in ["flick", "move"], "s3 至少有动作")
+	# 朝肉那一格蹲着猫、但狗还有别的路 => 撞飞那只猫
+	var blocker := _state_with_dog_at(Vector2i(2, 2), [
+		{ "type": "pawn", "pos": Vector2i(2, 3) },   # 正好挡在朝肉的方向上
+		{ "type": "pawn", "pos": Vector2i(0, 5) },
+	])
+	var p3 := DogAI.plan(blocker)
+	_eq(String(p3["kind"]), "flick", "朝肉方向被猫挡住时撞飞它")
+	_eq(p3["to"], Vector2i(2, 3), "撞的是挡路那只")
 
 
 func _test_respawn() -> void:
@@ -160,21 +190,20 @@ func _test_controller() -> void:
 		printerr("  FAIL: 非法走法应返回 false")
 	_eq(gc.state.turn, 0, "非法走法不推进回合")
 
-	# 车 (4,4) -> (4,3)，之后狗会撞飞离肉最近的马
-	_ok(gc.try_move_cat(0, Vector2i(4, 3)), "合法走法返回 true")
+	# 车 (4,4) -> (4,5)：这一步不会围死狗（(3,3) 还能走），用来测整回合流程
+	_ok(gc.try_move_cat(0, Vector2i(4, 5)), "合法走法返回 true")
 	_eq(gc.state.turn, 1, "走完推进到回合 1")
-	_eq(gc.state.cats[1]["type"], "horse", "猫列表顺序不变")
-	_ok(not gc.state.cats[1]["pos"] == Vector2i(2, 4), "马被撞飞离开了原位")
 	_eq(gc.state.meat_hp, 19, "回合末腐坏 -1")
-	_eq(gc.state.dog["pos"], Vector2i(3, 4), "撞飞时狗不移动")
+	_ok(not gc.finished, "这一步没有结束对局")
+	_eq(gc.state.dog["pos"], Vector2i(3, 3), "狗朝肉走了一格")
 
 	# 悔棋回到动手之前
 	_ok(gc.can_undo(), "有可悔的回合")
 	_ok(gc.undo(), "悔棋成功")
 	_eq(gc.state.turn, 0, "悔棋回到回合 0")
 	_eq(gc.state.meat_hp, 20, "悔棋回到 HP 20")
-	_eq(gc.state.cats[1]["pos"], Vector2i(2, 4), "悔棋把马放回原位")
 	_eq(gc.state.cats[0]["pos"], Vector2i(4, 4), "悔棋把车放回原位")
+	_eq(gc.state.dog["pos"], Vector2i(3, 4), "悔棋把狗放回原位")
 	if not gc.can_undo():
 		_pass += 1
 	else:
@@ -182,15 +211,19 @@ func _test_controller() -> void:
 		printerr("  FAIL: 悔到底后不该还能悔")
 
 	# 重开
-	_ok(gc.try_move_cat(0, Vector2i(4, 3)), "重开测试：先走一步")
+	_ok(gc.try_move_cat(0, Vector2i(4, 5)), "重开测试：先走一步")
 	gc.restart()
 	_eq(gc.state.turn, 0, "重开回到回合 0")
 	_eq(gc.state.meat_hp, 20, "重开回满 HP")
 
 	# 预览和实战走同一个 DogAI
-	var preview := gc.preview_after(0, Vector2i(4, 3))
+	var preview := gc.preview_after(0, Vector2i(4, 5))
 	_ok(preview.has("kind"), "预览返回了动作")
-	_eq(String(preview["kind"]), "flick", "预览：这一步之后狗会撞飞")
+	_eq(String(preview["kind"]), "move", "预览：这一步之后狗会走一格")
+
+	# 车 (4,4) -> (4,3) 会把狗彻底堵死 => 预览应当提前告诉玩家"这一步就赢了"
+	var lethal := gc.preview_after(0, Vector2i(4, 3))
+	_eq(String(lethal["kind"]), "encircled", "预览：这一步直接围死")
 
 
 ## 狗被围死 => 直接判赢。车(1,1) 同时控住 (1,0) 和 (0,1)，狗缩在 (0,0) 且旁边没猫。
