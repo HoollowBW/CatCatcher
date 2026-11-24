@@ -58,6 +58,21 @@ var _fail_count: int = 0          # 本关失败次数
 var _idle: float = 0.0            # 距上次操作的秒数
 var _hint_time: float = 0.0       # 引导箭头的浮动动画计时
 
+## ---- 演出（M4 里不需要美术的那部分）----
+const DISSOLVE_SHADER := preload("res://CatCatcherMAIN/Scenes/dissolve.gdshader")
+
+var _fx_layer: CanvasLayer = null
+var _flash: ColorRect = null
+var _banner_wrap: Control = null
+var _banner: Label = null
+
+var _fx_seq: String = ""          # "" / "win" / "lose"，用 _process 驱动，不用 await
+var _fx_t: float = 0.0
+
+var _shake_t: float = 0.0
+var _shake_dur: float = 0.0
+var _shake_amp: float = 0.0
+
 
 func _ready() -> void:
 	config = Level.load_config()
@@ -76,6 +91,7 @@ func _ready() -> void:
 	controller.game_over.connect(_on_game_over)
 
 	RenderingServer.set_default_clear_color(_color("bg"))
+	_build_fx_layer()
 	_build_result_layer()
 	print("[CatCatcher] 左键点猫选中 / 悬停格子看威胁范围 | 点高亮格移动 | Z 悔棋 | R 重开 | 通关后 SPACE 下一关")
 
@@ -134,6 +150,7 @@ func _start_level(index: int) -> void:
 	_update_hint()
 	_sync_units()
 	_hide_result()
+	_clear_fx()          # 上一关的演出（闪白/文字/震屏）可能还没播完
 	queue_redraw()
 
 	print("[CatCatcher] 关卡 %d/%d %s | 猫 %d 只 | 狗 %s @ %s | 肉 @ %s | HP %d" % [
@@ -209,23 +226,24 @@ func _update_hint() -> void:
 	var depth := int(config.get("solver", {}).get("hint_depth", 5))
 	_hint_step = Solver.first_step(controller.state, config, depth)
 
-	# 求解器在这个深度搜不到 -> 退回关卡里手写的提示（只在开局位置有意义）
-	if _hint_step.is_empty() and controller.state.turn == 0 and not level.hint.is_empty():
-		_hint_step = level.hint[0]
-
 
 func _process(delta: float) -> void:
-	if level == null or controller.finished:
+	_apply_shake(delta)
+	if level == null or controller == null:
 		return
-	_idle += delta
-	if _idle >= _hint_cfg("idle_seconds", 60.0):
-		_update_hint()
-		queue_redraw()
 
-	# 引导箭头的浮动动画：只在有提示时每帧重画（没提示就一次都不重画）
-	if not _hint_step.is_empty():
-		_hint_time += delta
-		queue_redraw()
+	if not controller.finished:
+		_idle += delta
+		if _idle >= _hint_cfg("idle_seconds", 60.0):
+			_update_hint()
+			queue_redraw()
+
+		# 引导箭头的浮动动画：只在有提示时每帧重画（没提示就一次都不重画）
+		if not _hint_step.is_empty():
+			_hint_time += delta
+			queue_redraw()
+
+	_update_fx(delta)
 
 
 func _reset_idle() -> void:
@@ -498,6 +516,154 @@ func _draw_hud() -> void:
 		_text("-> (%d,%d)" % [to_cell.x, to_cell.y], bar_pos + Vector2(bar_w + 24, 44), FONT_SMALL, Color(0.85, 0.82, 0.76))
 
 
+# ------------------------------------------------------------ 演出（无美术）----
+#
+# 这几样全靠代码和现成占位贴图，不需要任何新美术：
+#   · 屏幕震动（board 整体平移 + 衰减）
+#   · 闪白 / 闪红 + 大号文字弹入（CanvasLayer，永远盖在单位上面）
+#   · 猫被撞飞时在原格留一个残影，用 dissolve.gdshader 烧掉
+
+func _build_fx_layer() -> void:
+	_fx_layer = CanvasLayer.new()
+	_fx_layer.layer = 5            # 在结算层（10）下面
+	add_child(_fx_layer)
+
+	_flash = ColorRect.new()
+	_flash.color = Color(1, 1, 1, 0)
+	_flash.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_fx_layer.add_child(_flash)
+
+	_banner_wrap = Control.new()
+	_banner_wrap.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_banner_wrap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_banner_wrap.visible = false
+	_fx_layer.add_child(_banner_wrap)
+
+	_banner = Label.new()
+	_banner.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_banner.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_banner.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_banner.add_theme_font_size_override("font_size", 52)
+	_banner.add_theme_color_override("font_color", Color("#fff4d6"))
+	_banner.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_banner_wrap.add_child(_banner)
+
+
+func _shake(duration: float, amplitude: float) -> void:
+	_shake_dur = maxf(duration, 0.001)
+	_shake_t = _shake_dur
+	_shake_amp = amplitude
+
+
+## 震屏：整体平移 board 节点，幅度随时间线性衰减到 0。
+## ⚠️ 因为 board 会动，_point_to_cell 必须用 to_local(get_global_mouse_position())，
+##    否则震屏那零点几秒里点击会错位。
+func _apply_shake(delta: float) -> void:
+	if _shake_t <= 0.0:
+		if position != Vector2.ZERO:
+			position = Vector2.ZERO
+		return
+	_shake_t -= delta
+	var k := clampf(_shake_t / _shake_dur, 0.0, 1.0)
+	var t := Time.get_ticks_msec() / 1000.0
+	position = Vector2(sin(t * 61.0), cos(t * 47.0)) * _shake_amp * k
+
+
+## 受击反馈：狗啃肉 => 小震 + 红光
+func _punch_meat() -> void:
+	_shake(0.22, 6.0)
+	_flash.color = Color(0.85, 0.15, 0.1, 0.22)
+
+
+func _start_finish_fx(is_win: bool) -> void:
+	_fx_seq = "win" if is_win else "lose"
+	_fx_t = 0.0
+	if is_win:
+		_banner.text = "ENCIRCLED!"
+		_banner.add_theme_color_override("font_color", Color("#c9f08a"))
+		_shake(0.6, 14.0)
+	else:
+		_shake(0.45, 9.0)
+
+
+## 结算演出：先播完再弹结算面板，节奏按 _fx_t 走，不用 await（悔棋/重开时能干净打断）
+func _update_fx(delta: float) -> void:
+	if _fx_seq.is_empty():
+		return
+	_fx_t += delta
+
+	var flash_alpha := 0.0
+	if _fx_seq == "win":
+		flash_alpha = 0.9 * maxf(0.0, 1.0 - _fx_t / 0.22)
+		if _fx_t >= 0.10:
+			_banner_wrap.visible = true
+			var p := clampf((_fx_t - 0.10) / 0.26, 0.0, 1.0)
+			# ease-out + 轻微回弹，比线性有精神
+			var s := 0.55 + 0.55 * (1.0 - pow(1.0 - p, 3.0))
+			_banner_wrap.scale = Vector2(s, s)
+			_banner_wrap.pivot_offset = get_viewport_rect().size * 0.5
+		if _fx_t >= 1.0:
+			_end_finish_fx()
+			return
+	else:
+		flash_alpha = 0.45 * maxf(0.0, 1.0 - _fx_t / 0.30)
+		if _fx_t >= 0.55:
+			_end_finish_fx()
+			return
+
+	var c := _flash.color
+	_flash.color = Color(c.r, c.g, c.b, flash_alpha)
+
+
+func _end_finish_fx() -> void:
+	_fx_seq = ""
+	_flash.color = Color(_flash.color.r, _flash.color.g, _flash.color.b, 0.0)
+	_banner_wrap.visible = false
+	_banner_wrap.scale = Vector2.ONE
+	_show_result()
+
+
+func _clear_fx() -> void:
+	_fx_seq = ""
+	_fx_t = 0.0
+	_shake_t = 0.0
+	position = Vector2.ZERO
+	if _flash != null:
+		_flash.color = Color(_flash.color.r, _flash.color.g, _flash.color.b, 0.0)
+	if _banner_wrap != null:
+		_banner_wrap.visible = false
+		_banner_wrap.scale = Vector2.ONE
+
+
+## 猫被撞飞：在它**原来的格子**留一个残影，用 dissolve shader 烧掉。
+## 残影只是视觉，不参与任何规则运算。
+func _spawn_dissolve_ghost(source: Node2D, cell: Vector2i) -> void:
+	if source == null or not (source is Sprite2D):
+		return
+	var sprite := source as Sprite2D
+	if sprite.texture == null:
+		return
+
+	var ghost := Sprite2D.new()
+	ghost.texture = sprite.texture
+	ghost.scale = sprite.scale
+	ghost.modulate = sprite.modulate
+	ghost.position = _cell_center(cell)
+	ghost.z_index = 5
+
+	var mat := ShaderMaterial.new()
+	mat.shader = DISSOLVE_SHADER
+	ghost.material = mat
+	_level_root.add_child(ghost)
+
+	var tween := create_tween()
+	tween.tween_method(
+		func(v: float) -> void: mat.set_shader_parameter("progress", v),
+		0.0, 1.0, 0.38)
+	tween.tween_callback(ghost.queue_free)
+
+
 # ------------------------------------------------------------ 结算界面 ----
 #
 # ⚠️ 结算界面**不能**画在 _draw() 里：单位现在是关卡场景的子节点，子节点永远画在
@@ -604,7 +770,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	# 已经选了猫，且点的是合法落点 => 走这一步（狗会立刻行动）
 	if _selected >= 0 and not controller.finished:
 		if MoveRules.legal_moves(controller.state, _selected).has(cell):
-			controller.try_move_cat(_selected, cell)
+			_do_move(_selected, cell)
 			_selected = -1
 			_bump_version()
 			_update_hint()
@@ -616,11 +782,33 @@ func _unhandled_input(event: InputEvent) -> void:
 	queue_redraw()
 
 
+## 走这一步 + 顺带播受击反馈：狗啃肉 => 震屏红光；有猫被撞飞 => 原格烧一个残影。
+## 全靠"动手前后对比 state"判断，不需要 Core 额外回报发生了什么。
+func _do_move(cat_index: int, to: Vector2i) -> void:
+	var before_hp := controller.state.meat_hp
+	var before_cells: Array = []
+	for c in controller.state.cats:
+		before_cells.append(c["pos"])
+
+	controller.try_move_cat(cat_index, to)
+
+	if controller.state.meat_hp <= before_hp - 2:
+		_punch_meat()
+
+	for i in controller.state.cats.size():
+		var now: Vector2i = controller.state.cats[i]["pos"]
+		if i == cat_index:
+			continue
+		if now != before_cells[i]:
+			_spawn_dissolve_ghost(_cat_nodes[i] if i < _cat_nodes.size() else null, before_cells[i])
+			_shake(0.2, 5.0)
+
+
 func _on_game_over(is_win: bool, _reason: String) -> void:
 	_selected = -1
 	if not is_win:
 		_fail_count += 1
-	_show_result()
+	_start_finish_fx(is_win)      # 先播演出，演完 _end_finish_fx 才弹结算
 	queue_redraw()
 
 
@@ -631,8 +819,9 @@ func _cell_rect(cell: Vector2i) -> Rect2:
 
 
 ## 屏幕坐标 -> 格子。棋盘外返回 (-1, -1)。
+## ⚠️ 先 to_local：震屏时 board 整体在平移，直接拿 global 坐标比会错位。
 func _point_to_cell(p: Vector2) -> Vector2i:
-	var local := p - Vector2(board_origin)
+	var local := to_local(p) - Vector2(board_origin)
 	if local.x < 0.0 or local.y < 0.0:
 		return Vector2i(-1, -1)
 	var cell := Vector2i(int(local.x / cell_size), int(local.y / cell_size))
