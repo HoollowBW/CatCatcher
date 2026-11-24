@@ -1,0 +1,15 @@
+{
+  "id": 1,
+  "name": "教学 · 先堵住它的路",
+  "grid": { "w": 6, "h": 6 },
+  "meat": [2, 1],
+  "dog": { "pos": [3, 4], "type": "stray" },
+  "cats": [
+    { "pos": [4, 4], "type": "rook" },
+    { "pos": [2, 4], "type": "horse" },
+    { "pos": [3, 5], "type": "pawn" }
+  ],
+  "obstacles": [[0, 5]],
+  "hint": [[4, 3], [5, 4]],
+  "max_turns": 12
+}

@@ -1,0 +1,27 @@
+{
+  "board": {
+    "cell_size": 64,
+    "origin": [288, 40],
+    "colors": {
+      "bg": "#2b2620",
+      "cell": "#f5ecd8",
+      "cell_alt": "#ece0c6",
+      "obstacle": "#8a7a5c",
+      "control": "#7fb06959",
+      "danger": "#c0504059",
+      "selected": "#d4a017",
+      "cat": "#f2a65a",
+      "dog": "#4a4a4a",
+      "meat": "#c0504d"
+    }
+  },
+  "meat": {
+    "max_hp": 20,
+    "decay_per_turn": 1,
+    "bite_damage": 3
+  },
+  "dog": {
+    "warning_outline": "#e03e3e",
+    "warning_width": 3
+  }
+}
