@@ -19,13 +19,14 @@ const HOLD_TIME := 1.5       # 围死定格
 const BLANK_TIME := 0.35     # 清盘，重播下一轮
 
 ## 演示局面 —— 和任何真关卡无关，只把规则演一遍。
-## 改坐标后 _ready 里的 assert 会立刻告诉你还围不围得住狗。
+## 改坐标后 _ready 里的 assert 会立刻告诉你还围不围得住狗（调试版启动即报错）。
+## ⚠️ 新规则下"狗贴着肉就永远有动作"，所以演示必须让狗**停在离肉 ≥2 格**处被围死。
 const W := 6
 const H := 6
-const MEAT_CELL := Vector2i(4, 2)
-const DOG_CELLS := [Vector2i(1, 2), Vector2i(2, 2), Vector2i(3, 2)]  # 狗从左边一格一格走向肉
-const CAT_CELLS := [Vector2i(2, 1), Vector2i(3, 4)]                  # 车封左侧和上方、兵封下方
-const CAT_TYPES := ["rook", "pawn"]
+const MEAT_CELL := Vector2i(5, 2)
+const DOG_CELLS := [Vector2i(0, 2), Vector2i(1, 2), Vector2i(2, 2)]  # 狗从左边一格一格走向肉
+const CAT_CELLS := [Vector2i(2, 0), Vector2i(0, 2)]                  # 车封上下两格、车封左右两格
+const CAT_TYPES := ["rook", "rook"]
 
 const TITLE_LINES := ["CAT", "CATCHER"]
 const FONT_TITLE := 34
@@ -69,7 +70,7 @@ func _ready() -> void:
 	_meat_node = $Units/Meat
 	_flash = $FxLayer/Flash
 	_banner = $FxLayer/Banner
-	_cat_nodes = [$Units/CatRook, $Units/CatPawn]
+	_cat_nodes = [$Units/CatRook, $Units/CatRook2]
 	for n in _cat_nodes:
 		_base_scale.append(n.scale)
 		n.visible = false

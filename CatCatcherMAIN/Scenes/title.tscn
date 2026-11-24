@@ -17,7 +17,7 @@ script = ExtResource("1_title")
 
 [node name="CatRook" parent="Units" instance=ExtResource("4_rook")]
 
-[node name="CatPawn" parent="Units" instance=ExtResource("5_pawn")]
+[node name="CatRook2" parent="Units" instance=ExtResource("4_rook")]
 
 [node name="FxLayer" type="CanvasLayer" parent="."]
 layer = 5
