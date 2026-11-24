@@ -20,6 +20,7 @@ func _initialize() -> void:
 	_test_protection()
 	_test_dog_actions()
 	_test_dog_ai()
+	_test_shove()
 	_test_rules()
 	_test_controller()
 	_test_respawn()
@@ -220,6 +221,47 @@ func _test_dog_ai() -> void:
 		{ "type": "rook", "pos": Vector2i(0, 2) },
 	], { "meat": Vector2i(5, 5) })
 	_eq(String(DogAI.plan(mated)["kind"]), "none", "被围死时狗没有动作")
+
+
+## 驱赶：把狗逼离它脚下的格，逃跑就是它这一回合的行动
+func _test_shove() -> void:
+	# 车(2,0) 控住狗的格子 (2,2)，狗还有 (1,2)/(3,2) 可走，旁边没猫 => 能赶
+	var s := _mk(Vector2i(2, 2), [{ "type": "rook", "pos": Vector2i(2, 0) }], { "meat": Vector2i(5, 5) })
+	_ok(Encircle.can_shove(s), "狗脚下被控制 + 有路可走 => 可以驱赶")
+
+	# 低吼中的狗也能被赶，且低吼清零
+	var near := _mk(Vector2i(2, 2), [{ "type": "rook", "pos": Vector2i(2, 0) }],
+		{ "meat": Vector2i(2, 3), "growling": true })
+	_ok(Encircle.can_shove(near), "低吼中的狗也能驱赶")
+	Rules.apply_shove(near, {})
+	_ok(near.dog["pos"] != Vector2i(2, 2), "驱赶把狗赶离了原地")
+	_ok(not near.growling, "驱赶清零低吼")
+
+	# 旁边蹲着吃得掉的猫 => 狗会反吃，赶不动
+	var armed := _mk(Vector2i(2, 2), [
+		{ "type": "rook", "pos": Vector2i(2, 0) },
+		{ "type": "pawn", "pos": Vector2i(1, 2) },
+	], { "meat": Vector2i(5, 5) })
+	_ok(not Encircle.can_shove(armed), "旁边有吃得掉的猫时赶不动")
+
+	# 没罩住狗 => 赶不动
+	var free := _mk(Vector2i(2, 2), [{ "type": "rook", "pos": Vector2i(5, 0) }], { "meat": Vector2i(0, 0) })
+	_ok(not Encircle.can_shove(free), "没控制住狗所在格就不能驱赶")
+
+	# 落点必须是狗本来就能走的格，而且确定性
+	var target := Encircle.shove_target(s)
+	_ok(Encircle.movable_cells(s).has(target), "驱赶落点是狗的合法走法")
+	_eq(target, Encircle.shove_target(s), "驱赶落点确定性")
+
+	# 控制器：驱赶占掉本回合，提交后狗不再多走一步
+	var gc := _controller_for(s)
+	_ok(gc.can_shove(), "控制器认为可以驱赶")
+	_ok(gc.shove(), "驱赶成功")
+	_ok(gc.has_moved(), "驱赶占掉本回合的行动")
+	var dog_after_shove: Vector2i = gc.state.dog["pos"]
+	_ok(gc.end_turn(), "提交回合")
+	_eq(gc.state.dog["pos"], dog_after_shove, "驱赶的回合里狗不再行动")
+	_eq(gc.state.turn, 1, "驱赶也推进一回合")
 
 
 ## 一个回合的结算

@@ -67,14 +67,22 @@ static func _preferred_step(state: GameState) -> Vector2i:
 	return best
 
 
+## 离肉最近的可走格；**同样近时选"逃路更多"的安全格**（免得一头钻进死角）。
 static func _closest_to_meat(state: GameState, cells: Array) -> Vector2i:
 	var best: Vector2i = cells[0]
 	var best_d := _manhattan(best, state.meat_pos)
+	var best_safe := Encircle.escape_count(state, best)
 	for cell in cells:
 		var d := _manhattan(cell, state.meat_pos)
 		if d < best_d:
-			best_d = d
 			best = cell
+			best_d = d
+			best_safe = Encircle.escape_count(state, cell)
+		elif d == best_d:
+			var safe := Encircle.escape_count(state, cell)
+			if safe > best_safe:
+				best = cell
+				best_safe = safe
 	return best
 
 

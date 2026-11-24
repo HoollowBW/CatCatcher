@@ -77,6 +77,56 @@ static func meat_action(state: GameState) -> Dictionary:
 	return { "kind": "growl", "to": dog, "cat": -1 }
 
 
+## 【驱赶】玩家点狗所在格 = 逼它换个落脚点（逃跑就是它这一回合的行动）。
+## 三个条件缺一不可：
+##   ① 狗脚下那格被某只猫控制（界面上那格是绿的）
+##   ② 它还有空可走（没得跑就赶不动）
+##   ③ 它吃不到旁边的猫（能反吃的狗不会乖乖走）
+static func can_shove(state: GameState) -> bool:
+	if not MoveRules.controlled_cells(state).has(state.dog["pos"]):
+		return false
+	if movable_cells(state).is_empty():
+		return false
+	if not flickable_cats(state).is_empty():
+		return false
+	return true
+
+
+## 狗会被赶到哪个格：优先"逃路最多"的（安全格），其次离肉更远，最后按方向表顺序。
+## 全确定性 —— 预览和实战必须给同一个答案。
+static func shove_target(state: GameState) -> Vector2i:
+	var best := Vector2i(-1, -1)
+	var best_safe := -1
+	var best_far := -1
+	for cell in movable_cells(state):
+		var safe := escape_count(state, cell)
+		var far := _manhattan(cell, state.meat_pos)
+		if safe > best_safe or (safe == best_safe and far > best_far):
+			best = cell
+			best_safe = safe
+			best_far = far
+	return best
+
+
+## 站在 cell 上还能往几个方向跑 —— 这就是狗的"安全感"。
+## ponytail: 每次调用都重算一遍 controlled_cells，棋盘才 36 格，不值得缓存。
+static func escape_count(state: GameState, cell: Vector2i) -> int:
+	var controlled := MoveRules.controlled_cells(state)
+	var n := 0
+	for dir in MoveRules.ORTHO_DIRS:
+		var nxt: Vector2i = cell + dir
+		if state.is_wall(nxt):
+			continue
+		if nxt == state.meat_pos:
+			continue
+		if state.cat_at(nxt) != -1:
+			continue
+		if controlled.has(nxt):
+			continue
+		n += 1
+	return n
+
+
 ## 给表现层用的完整动作表（走 + 吃子 + 对肉）。
 ## 这**就是**围死判定的依据：空表才算玩家赢。
 static func legal_actions(state: GameState) -> Array:
