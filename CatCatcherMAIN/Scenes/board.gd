@@ -56,6 +56,7 @@ var _hint_version: int = -1       # 提示是基于哪一版局面算的
 var _version: int = 0             # 局面版本号，每次行动 +1
 var _fail_count: int = 0          # 本关失败次数
 var _idle: float = 0.0            # 距上次操作的秒数
+var _hint_time: float = 0.0       # 引导箭头的浮动动画计时
 
 
 func _ready() -> void:
@@ -221,6 +222,11 @@ func _process(delta: float) -> void:
 		_update_hint()
 		queue_redraw()
 
+	# 引导箭头的浮动动画：只在有提示时每帧重画（没提示就一次都不重画）
+	if not _hint_step.is_empty():
+		_hint_time += delta
+		queue_redraw()
+
 
 func _reset_idle() -> void:
 	_idle = 0.0
@@ -259,26 +265,16 @@ func _draw_control(controlled: Dictionary) -> void:
 		draw_rect(_cell_rect(cell), _color("control"))
 
 
-## 当前"在看"的那只猫的控制范围再压一层，方便看清"这只猫管到哪"。
-## 鼠标悬停在猫身上就能看，不用先点下去（点了就锁定成那只）。
+## 选中那只猫的控制范围再压一层，方便看清"这只猫管到哪"。
+## 和隔壁一样：**只有选中了才显示**，悬停不算（否则鼠标扫过棋盘时整盘乱闪）。
 func _draw_focus_reach() -> void:
-	var index := _focus_cat_index()
-	if index < 0:
+	if _selected < 0:
 		return
-	for cell in MoveRules.reach_cells(controller.state, index):
+	for cell in MoveRules.reach_cells(controller.state, _selected):
 		draw_rect(_cell_rect(cell), _color("control").lightened(0.15))
 	# 可落的格画个内框，和"只是被控制"区分开
-	for cell in MoveRules.legal_moves(controller.state, index):
+	for cell in MoveRules.legal_moves(controller.state, _selected):
 		draw_rect(_cell_rect(cell).grow(-6), _color("selected"), false, 2.0)
-
-
-## 「正在关注哪只猫」：选中了就是它；没选中时鼠标停在哪只猫身上就是它。
-func _focus_cat_index() -> int:
-	if _selected >= 0:
-		return _selected
-	if _hover.x < 0 or controller == null or controller.state == null:
-		return -1
-	return controller.state.cat_at(_hover)
 
 
 ## 单位不在这里画 —— 它们是关卡场景里拖好的节点，由 _sync_units() 挪位置。
@@ -355,22 +351,13 @@ func _draw_preview() -> void:
 	draw_arc(to, cell_size * 0.32, 0.0, TAU, 24, warn, 3.0)
 
 
-## 这次预览算哪只猫的：
-## 选中了就用选中的；没选中时，如果**只有一只**猫能走到这一格，就自动用它。
-## 多只猫都能走到（车和马经常重叠）就不猜 —— 猜错了比不给更糟。
+## 预览只对**选中的那只猫**生效 —— 和隔壁一致，鼠标闲着扫棋盘不会到处冒预览。
 func _preview_cat_index() -> int:
-	if _selected >= 0:
-		if MoveRules.legal_moves(controller.state, _selected).has(_hover):
-			return _selected
+	if _selected < 0 or _hover.x < 0:
 		return -1
-
-	var found := -1
-	for i in controller.state.cats.size():
-		if MoveRules.legal_moves(controller.state, i).has(_hover):
-			if found >= 0:
-				return -1
-			found = i
-	return found
+	if MoveRules.legal_moves(controller.state, _selected).has(_hover):
+		return _selected
+	return -1
 
 
 func _draw_selection() -> void:
@@ -379,16 +366,104 @@ func _draw_selection() -> void:
 	draw_rect(_cell_rect(controller.state.cats[_selected]["pos"]), _color("selected"), false, 4.0)
 
 
-## 提示：圈出"该动哪只猫"和"走到哪"。来源是求解器，见 _update_hint。
+## 引导：多邻国那套 —— 一条从"该动的那只猫"指向目标格的大箭头，
+## 外加猫头顶上下浮动的小箭头（"点这一只"）。所有形状都先画深色描边再画本体，
+## 保证在任何底色上都看得清。来源是求解器，见 _update_hint。
 func _draw_hint() -> void:
 	if _hint_step.is_empty() or controller.finished:
 		return
-	var cat_cell := _hint_cell(_hint_step["cat"])
-	var to_cell := _hint_cell(_hint_step["to"])
-	var tint := _color("hint")
-	draw_rect(_cell_rect(cat_cell), tint, false, 4.0)
-	draw_rect(_cell_rect(to_cell).grow(-8), tint, false, 3.0)
-	draw_arc(_cell_rect(to_cell).get_center(), cell_size * 0.30, 0.0, TAU, 20, tint, 2.0)
+
+	var from := _cell_rect(_hint_cell(_hint_step["cat"])).get_center()
+	var to := _cell_rect(_hint_cell(_hint_step["to"])).get_center()
+	var fill := _color("hint")
+	var edge := Color(0.10, 0.13, 0.18, 0.92)
+
+	# 一步之遥时格子之间本来就没多少空地，落点圈得缩小，否则箭头会被挤成一坨
+	var ring_r := cell_size * (0.26 if from.distance_to(to) < cell_size * 1.45 else 0.36)
+
+	_draw_hint_arrow(from, to, ring_r, fill, edge)
+
+	# 落点圈：强调"就是这里"（箭头停在圈外）
+	draw_arc(to, ring_r, 0.0, TAU, 28, edge, 5.0)
+	draw_arc(to, ring_r, 0.0, TAU, 28, fill, 2.5)
+
+	# 猫头顶浮动的指示箭头
+	var bob := sin(_hint_time * 4.5) * cell_size * 0.07
+	_draw_hint_chevron(Vector2(from.x, from.y - cell_size * 0.62 + bob), fill, edge)
+
+
+## 从 from 指向 to 的粗箭头（描边 + 本体 + 箭头三角）
+## 一格距离时改画"朝目标方向"的指示三角 —— 长箭头在那个距离上根本铺不开。
+func _draw_hint_arrow(from: Vector2, to: Vector2, ring_r: float, fill: Color, edge: Color) -> void:
+	var dir := to - from
+	var dist := dir.length()
+	if dist < 1.0:
+		return
+	dir = dir.normalized()
+	var side := Vector2(-dir.y, dir.x)
+
+	if dist < cell_size * 1.45:
+		var tip := to - dir * (ring_r + 5.0)
+		var base := from + dir * cell_size * 0.24
+		if base.distance_to(tip) > 10.0:
+			_draw_hint_pointer(base, tip, dir, side, fill, edge)
+		return
+
+	var start := from + dir * cell_size * 0.26
+	var tip := to - dir * (ring_r + 8.0)
+	var head_len := clampf(dist * 0.34, cell_size * 0.18, cell_size * 0.26)
+	var head_half := cell_size * 0.17
+	var base := tip - dir * head_len
+
+	# 描边层
+	draw_line(start, base, edge, 9.0)
+	draw_colored_polygon(PackedVector2Array([
+		tip + dir * 4.0,
+		base + side * (head_half + 4.0),
+		base - side * (head_half + 4.0),
+	]), edge)
+
+	# 本体
+	draw_line(start, base, fill, 5.0)
+	draw_colored_polygon(PackedVector2Array([
+		tip,
+		base + side * head_half,
+		base - side * head_half,
+	]), fill)
+
+
+## 一个从 base 指到 tip 的指示三角（短距离提示用）
+func _draw_hint_pointer(base: Vector2, tip: Vector2, dir: Vector2, side: Vector2, fill: Color, edge: Color) -> void:
+	var head_half := cell_size * 0.17
+	var head_base := tip - dir * minf(cell_size * 0.22, base.distance_to(tip) * 0.8)
+	draw_line(base, head_base, edge, 9.0)
+	draw_line(base, head_base, fill, 5.0)
+	draw_colored_polygon(PackedVector2Array([
+		tip + dir * 4.0,
+		head_base + side * (head_half + 4.0),
+		head_base - side * (head_half + 4.0),
+	]), edge)
+	draw_colored_polygon(PackedVector2Array([
+		tip,
+		head_base + side * head_half,
+		head_base - side * head_half,
+	]), fill)
+
+
+## 朝下的指示三角（"点这一只"）
+func _draw_hint_chevron(tip: Vector2, fill: Color, edge: Color) -> void:
+	var w := cell_size * 0.20
+	var h := cell_size * 0.24
+	draw_colored_polygon(PackedVector2Array([
+		tip + Vector2(0, 4),
+		tip + Vector2(-w - 4, -h - 4),
+		tip + Vector2(w + 4, -h - 4),
+	]), edge)
+	draw_colored_polygon(PackedVector2Array([
+		tip,
+		tip + Vector2(-w, -h),
+		tip + Vector2(w, -h),
+	]), fill)
 
 
 func _hint_cell(arr: Array) -> Vector2i:
