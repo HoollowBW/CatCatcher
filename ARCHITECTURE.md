@@ -133,7 +133,7 @@ godot --headless --main-pack build\web\index.pck --quit
 | **M0** | 棋盘画出来、点格子有选中反馈、单位以占位方块 + 类型文字显示在正确格 | ✅ |
 | **M1** | 猫能动、控制范围实时显示、狗按规则行动、围死能判赢、肉 HP 归零能判负、能重开、能悔棋、能预览狗的行动 | ✅ |
 | M2 | 从 JSON 读多关、通关进下一关 | ✅ |
-| M3 | 求解器能验证关卡有解（启动时跑）、能给提示 | |
+| M3 | 求解器能验证关卡有解（启动时跑）、能给提示 | ✅ |
 | M4 | 视觉替换（便利贴、人脸猫、dissolve、总攻击、开场动画） | |
 | M5 | Web 导出 + 部署 | |
 
@@ -188,8 +188,39 @@ godot --headless --path . --script res://tests/selftest.gd   # 退出码 0 = 全
 `cat_at()` 只返回其中一只，需要枚举时要遍历 `cats`。这是 v1 唯一的叠放场景，
 玩家自己操作**仍然不允许**把猫走到有猫的格上。
 
-## 9. 明确不做（别自作主张加）
+### 8.4 求解器只有一个，三处共用
 
+`Core/solver.gd` 是唯一的搜索实现（迭代加深 DFS，返回**最短**赢棋路线）：
+
+| 用处 | 调用点 |
+|---|---|
+| 启动校验每关有解（无解 `push_error`） | `Level.validate_all()` ← `board._ready()` |
+| 提示：从**当前局面**算下一步 | `board._update_hint()` |
+| 设计关卡时量难度 | `tests/solvecheck.gd` |
+
+三者都走 `Rules.apply_turn`，所以搜出来的路线实战一定走得通。
+**别在别处另写搜索** —— 一份逻辑改一处，三份逻辑改成三处、漏两处。
+
+⚠️ 搜索必须带 `node_budget`（默认 20 万节点）。深度一上去就是指数爆炸，
+宁可返回"搜不到"，也不能把浏览器卡死。深度和预算在 `game_config.json` 的 `solver` 段。
+
+### 8.5 关卡编辑器
+
+`Scenes/level_editor.tscn` 是照隔壁 HollowBastion「关卡场景 + `@tool`」那套搬过来的，
+区别是隔壁存 `.tscn`、我们**导出 JSON**：
+
+1. Godot 里打开 `level_editor.tscn`
+2. 把 `level_marker.tscn` 拖进去当子节点，设 `kind`（cat / dog / meat / obstacle），猫再设 `cat_type`
+3. 随便往格子上拖 —— 每帧自动吸到格心
+4. Inspector 点「导出关卡 JSON」；改已有关卡就先点「从 JSON 载入」
+
+编辑器用的是和游戏**完全同一套**格子坐标（直接读 `game_config.json` 的 origin / cell_size），
+所以导出坐标不会整体偏移。
+
+⚠️ 导出后必须手工把新关卡加进 `Level.LEVEL_PATHS` **和** `Level._EXPORT_DEPS`，
+再去掉 `solution`（或者跑一次 `solvecheck` 把解法贴进去）—— 否则 `selftest` 会拦你。
+
+## 9. 明确不做（别自作主张加）
 - ❌ 血量 / 伤害 / 攻击力系统（肉的 HP 是倒计时，不是战斗）
 - ❌ 自由组队、抽卡、养成、背包
 - ❌ 肉鸽、随机地图生成

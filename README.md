@@ -54,11 +54,21 @@ godot --headless --main-pack build\web\index.pck --quit
 godot --path . --write-movie "$env:TEMP\shot\f.png" --fixed-fps 30 --quit-after 3
 ```
 
+## 关卡编辑器
+
+Godot 里打开 `CatCatcherMAIN/Scenes/level_editor.tscn`，把 `level_marker.tscn` 拖进去当子节点，
+设好 `kind` / `cat_type`，往格子上拖（会自动吸到格心），Inspector 里点「导出关卡 JSON」。
+
+导出后记得把新关加进 `Level.LEVEL_PATHS` 和 `Level._EXPORT_DEPS`，否则 web 版读不到。
+
 ## 操作
 
 左键点猫选中 → 悬停可落格看敌方行动预览 → 点格子移动（狗会立刻行动）。
 <kbd>Z</kbd> 悔棋（一次撤一整个回合），<kbd>R</kbd> 重开本关，<kbd>Esc</kbd> 取消选中，
 通关后 <kbd>Space</kbd> 进下一关。
+
+前 2 关常驻提示（蓝色框 = 该动哪只猫，圆圈 = 走到哪）；之后要连续失败 2 次
+或挂机 60 秒才会给下一步。
 
 ## 技术
 

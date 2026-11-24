@@ -68,6 +68,27 @@ static func from_index(index: int) -> Level:
 	return from_file(p)
 
 
+## 启动时把关卡全部验一遍：每关必须有解，而且开局不能已经是围死（那是白送）。
+## 返回问题描述数组，空 = 全部正常。用 Solver 真搜，不是读 solution 糊弄。
+static func validate_all(config: Dictionary) -> Array:
+	var problems: Array = []
+	var depth := int(config.get("solver", {}).get("validate_depth", Solver.DEFAULT_DEPTH))
+
+	for i in count():
+		var lv := from_index(i)
+		if lv == null:
+			problems.append("关卡 %d 加载失败" % (i + 1))
+			continue
+
+		var st := lv.to_state(config)
+		if Encircle.is_encircled(st):
+			problems.append("关卡 %d「%s」开局就是围死，等于白送" % [i + 1, lv.display_name])
+			continue
+		if not Solver.is_solvable(st, config, depth):
+			problems.append("关卡 %d「%s」在 %d 步内搜不到解" % [i + 1, lv.display_name, depth])
+	return problems
+
+
 ## 读一个 JSON 成 Dictionary。
 ## 【只能走 load()，不能用 FileAccess】—— 原因见上面 _EXPORT_DEPS 的注释。
 ## 读不到/解析失败就 push_error 返回 {}，让上层显式判空。

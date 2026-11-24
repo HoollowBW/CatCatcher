@@ -41,6 +41,14 @@ var _hover := Vector2i(-1, -1)
 ## 当前关卡在 Level.LEVEL_PATHS 里的下标
 var _level_index: int = 0
 
+## ---- 提示系统（M3）----
+## 前 tutorial_levels 关强引导；之后的关卡要连续失败 fail_threshold 次、或挂机 idle_seconds 秒才给
+var _hint_step: Dictionary = {}
+var _hint_version: int = -1       # 提示是基于哪一版局面算的
+var _version: int = 0             # 局面版本号，每次行动 +1
+var _fail_count: int = 0          # 本关失败次数
+var _idle: float = 0.0            # 距上次操作的秒数
+
 
 func _ready() -> void:
 	config = Level.load_config()
@@ -61,6 +69,13 @@ func _ready() -> void:
 	RenderingServer.set_default_clear_color(_color("bg"))
 	print("[CatCatcher] 左键点猫选中 / 点高亮格移动 | Z 悔棋 | R 重开本关 | 通关后 SPACE 下一关")
 
+	# 启动校验：每关都必须有解（求解器真搜，不是读 solution 糊弄）
+	var problems := Level.validate_all(config)
+	for p in problems:
+		push_error("[关卡校验] " + String(p))
+	if problems.is_empty():
+		print("[CatCatcher] 关卡校验通过（%d 关全部有解）" % Level.count())
+
 	_start_level(0)
 
 
@@ -75,6 +90,10 @@ func _start_level(index: int) -> void:
 	controller.setup(level, config)
 	_selected = -1
 	_hover = Vector2i(-1, -1)
+	_fail_count = 0
+	_idle = 0.0
+	_bump_version()
+	_update_hint()
 	queue_redraw()
 
 	print("[CatCatcher] 关卡 %d/%d %s | 猫 %d 只 | 狗 %s @ %s | 肉 @ %s | HP %d" % [
@@ -86,6 +105,59 @@ func _start_level(index: int) -> void:
 
 func _has_next_level() -> bool:
 	return _level_index + 1 < Level.count()
+
+
+# ---------------------------------------------------------------- 提示 ----
+
+func _bump_version() -> void:
+	_version += 1
+
+
+func _hint_cfg(key: String, fallback: float) -> float:
+	return float(config.get("hint", {}).get(key, fallback))
+
+
+## 这一关现在该不该给提示。
+func _hint_due() -> bool:
+	if controller.finished:
+		return false
+	if _level_index < int(_hint_cfg("tutorial_levels", 2)):
+		return true                                       # 前几关强引导
+	if _fail_count >= int(_hint_cfg("fail_threshold", 2)):
+		return true                                       # 失败够多次了
+	return _idle >= _hint_cfg("idle_seconds", 60.0)        # 或者卡住了
+
+
+## 提示 = 求解器从**当前局面**算出的第一步。
+## 用当前局面而不是关卡里写死的序列 —— 玩家走偏了也还能拿到正确提示。
+func _update_hint() -> void:
+	if not _hint_due():
+		_hint_step = {}
+		_hint_version = -1
+		return
+	if _hint_version == _version:
+		return
+
+	_hint_version = _version
+	var depth := int(config.get("solver", {}).get("hint_depth", 5))
+	_hint_step = Solver.first_step(controller.state, config, depth)
+
+	# 求解器在这个深度搜不到 -> 退回关卡里手写的提示（只在开局位置有意义）
+	if _hint_step.is_empty() and controller.state.turn == 0 and not level.hint.is_empty():
+		_hint_step = level.hint[0]
+
+
+func _process(delta: float) -> void:
+	if level == null or controller.finished:
+		return
+	_idle += delta
+	if _idle >= _hint_cfg("idle_seconds", 60.0):
+		_update_hint()
+		queue_redraw()
+
+
+func _reset_idle() -> void:
+	_idle = 0.0
 
 
 # ---------------------------------------------------------------- 绘制 ----
@@ -103,6 +175,7 @@ func _draw() -> void:
 	_draw_dog_warning(controlled)
 	_draw_preview()
 	_draw_selection()
+	_draw_hint()
 	_draw_hud()
 
 	if controller.finished:
@@ -203,6 +276,22 @@ func _draw_selection() -> void:
 	draw_rect(_cell_rect(controller.state.cats[_selected]["pos"]), _color("selected"), false, 4.0)
 
 
+## 提示：圈出"该动哪只猫"和"走到哪"。来源是求解器，见 _update_hint。
+func _draw_hint() -> void:
+	if _hint_step.is_empty() or controller.finished:
+		return
+	var cat_cell := _hint_cell(_hint_step["cat"])
+	var to_cell := _hint_cell(_hint_step["to"])
+	var tint := _color("hint")
+	draw_rect(_cell_rect(cat_cell), tint, false, 4.0)
+	draw_rect(_cell_rect(to_cell).grow(-8), tint, false, 3.0)
+	draw_arc(_cell_rect(to_cell).get_center(), cell_size * 0.30, 0.0, TAU, 20, tint, 2.0)
+
+
+func _hint_cell(arr: Array) -> Vector2i:
+	return Vector2i(int(arr[0]), int(arr[1]))
+
+
 func _draw_hud() -> void:
 	var state := controller.state
 	var bar_w := level.w * cell_size
@@ -221,6 +310,14 @@ func _draw_hud() -> void:
 	_text("LEVEL %d / %d" % [_level_index + 1, Level.count()],
 		bar_pos + Vector2(0, 62), FONT_SMALL, Color(0.78, 0.74, 0.66))
 	_text("LMB pick / move     Z undo     R restart", bar_pos + Vector2(0, 84), FONT_SMALL, Color(0.62, 0.58, 0.5))
+
+	# 提示文字放棋盘右侧空白处，别挤 HUD 下面那点地方
+	if not _hint_step.is_empty() and not controller.finished:
+		var cat_cell := _hint_cell(_hint_step["cat"])
+		var to_cell := _hint_cell(_hint_step["to"])
+		_text("HINT", bar_pos + Vector2(bar_w + 24, 6), FONT_SMALL, _color("hint"))
+		_text("(%d,%d)" % [cat_cell.x, cat_cell.y], bar_pos + Vector2(bar_w + 24, 26), FONT_SMALL, Color(0.85, 0.82, 0.76))
+		_text("-> (%d,%d)" % [to_cell.x, to_cell.y], bar_pos + Vector2(bar_w + 24, 44), FONT_SMALL, Color(0.85, 0.82, 0.76))
 
 
 func _draw_result() -> void:
@@ -253,10 +350,13 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 
 	if event is InputEventKey and event.pressed and not event.echo:
+		_reset_idle()
 		match event.keycode:
 			KEY_Z:
 				controller.undo()
 				_selected = -1
+				_bump_version()
+				_update_hint()
 			KEY_R:
 				_start_level(_level_index)      # 重开本关（不是从头玩）
 			KEY_SPACE:
@@ -270,6 +370,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	if not (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT):
 		return
 
+	_reset_idle()
 	var cell := _point_to_cell(get_global_mouse_position())
 	if cell.x < 0:
 		return
@@ -279,6 +380,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		if MoveRules.legal_moves(controller.state, _selected).has(cell):
 			controller.try_move_cat(_selected, cell)
 			_selected = -1
+			_bump_version()
+			_update_hint()
 			queue_redraw()
 			return
 
@@ -287,8 +390,10 @@ func _unhandled_input(event: InputEvent) -> void:
 	queue_redraw()
 
 
-func _on_game_over(_is_win: bool, _reason: String) -> void:
+func _on_game_over(is_win: bool, _reason: String) -> void:
 	_selected = -1
+	if not is_win:
+		_fail_count += 1
 	queue_redraw()
 
 
