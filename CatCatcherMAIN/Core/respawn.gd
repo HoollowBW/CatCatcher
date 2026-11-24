@@ -1,9 +1,9 @@
 class_name Respawn
 extends RefCounted
-## 「撞飞 / 扫中之后猫去哪」—— 动态投放到离主战场最远的格（ARCHITECTURE 8.1）。
+## 「被吃掉 / 撞飞之后猫去哪」—— 动态投放到离主战场最远的格（ARCHITECTURE 8.1）。
 ##
 ## 纯计算，不碰节点。**必须确定性**：同分按固定顺序取，绝不掷随机 ——
-## 一旦随机，预览和实战就对不上，玩家会觉得游戏在骗人（ARCHITECTURE 5.3）。
+## 一旦随机，预览和实战就对不上，玩家会觉得游戏在骗人（ARCHITECTURE 6.3）。
 
 ## 主战场 = {狗, 肉}。越靠近这两样，越不该作为投放点。
 static func pick_cell(state: GameState) -> Vector2i:
@@ -18,13 +18,16 @@ static func pick_cell(state: GameState) -> Vector2i:
 	for y in state.h:
 		for x in state.w:
 			var cell := Vector2i(x, y)
-			if state.is_blocked(cell):
+			if state.is_wall(cell):
 				continue
 			if cell == state.dog["pos"]:
 				continue
+			# 肉格最多站一只猫，而且"垫肉"是玩家的选择，投放绝不往那儿扔
+			if cell == state.meat_pos:
+				continue
 
 			var score := _focus_distance(state, cell)
-			var crowd := _cat_count(state, cell)
+			var crowd := state.cats_on(cell)
 
 			if crowd == 0 and score > best_empty_score:
 				best_empty = cell
@@ -51,11 +54,3 @@ static func _focus_distance(state: GameState, cell: Vector2i) -> int:
 
 static func _manhattan(a: Vector2i, b: Vector2i) -> int:
 	return absi(a.x - b.x) + absi(a.y - b.y)
-
-
-static func _cat_count(state: GameState, cell: Vector2i) -> int:
-	var n := 0
-	for cat in state.cats:
-		if cat["pos"] == cell:
-			n += 1
-	return n

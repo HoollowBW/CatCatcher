@@ -9,6 +9,9 @@ const SCENES := [
 	preload("res://CatCatcherMAIN/Levels/level_01.tscn"),
 	preload("res://CatCatcherMAIN/Levels/level_02.tscn"),
 	preload("res://CatCatcherMAIN/Levels/level_03.tscn"),
+	preload("res://CatCatcherMAIN/Levels/level_04.tscn"),
+	preload("res://CatCatcherMAIN/Levels/level_05.tscn"),
+	preload("res://CatCatcherMAIN/Levels/level_06.tscn"),
 ]
 
 ## 在编辑器里 F6 单独跑某一关时，关卡场景会先把路径写进 RunRequest（见 run_request.gd），

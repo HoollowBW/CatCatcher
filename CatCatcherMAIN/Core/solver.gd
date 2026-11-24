@@ -77,13 +77,14 @@ static func _search(state: GameState, config: Dictionary, depth: int, seen: Dict
 	return []
 
 
-## 状态指纹：猫按顺序取位置（叠放时也能区分），外加狗、肉 HP、回合数。
+## 状态指纹：猫按顺序取位置（叠放时也能区分），外加狗的位置、低吼状态、回合数。
+## ⚠️ growling 必须进指纹 —— 否则"低吼过/没低吼过"两种局面会被当成同一个而错误剪枝。
 static func _fingerprint(state: GameState) -> String:
 	var parts := PackedStringArray()
 	for c in state.cats:
 		var p: Vector2i = c["pos"]
 		parts.append("%d,%d" % [p.x, p.y])
 	parts.append("d%d,%d" % [state.dog["pos"].x, state.dog["pos"].y])
-	parts.append("h%d" % state.meat_hp)
+	parts.append("g%d" % int(state.growling))
 	parts.append("t%d" % state.turn)
 	return "|".join(parts)

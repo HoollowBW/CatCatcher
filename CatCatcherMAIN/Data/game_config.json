@@ -13,13 +13,9 @@
       "hint": "#3f8fd0",
       "cat": "#f2a65a",
       "dog": "#4a4a4a",
-      "meat": "#c0504d"
+      "meat": "#c0504d",
+      "growl": "#e03e3e"
     }
-  },
-  "meat": {
-    "max_hp": 20,
-    "decay_per_turn": 1,
-    "bite_damage": 3
   },
   "dog": {
     "warning_outline": "#e03e3e",

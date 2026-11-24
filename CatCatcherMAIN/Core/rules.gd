@@ -1,26 +1,36 @@
 class_name Rules
 extends RefCounted
-## 一个回合的完整结算，**纯静态函数**：给状态 + 玩家动作，原地推进整回合。
+## 一个回合的完整结算，**纯静态函数**：给状态 + 玩家动作，原地推进。
 ##
 ## 为什么单独抽出来：GameController（实战）、tests/solvecheck.gd（关卡设计搜索）、
-## 以后 M3 的求解器，三边必须是**同一套结算逻辑**。各写一份的下场是搜索说"这关有解"、
-## 实战却赢不了。
+## Core/solver.gd（启动校验 + 提示）三边必须是**同一套结算逻辑**。
+## 各写一份的下场是搜索说"这关有解"、实战却赢不了。
 ##
-## 调用方负责：① 先确认这一步合法（MoveRules.legal_moves）；② 需要回滚就自己先 snapshot()。
+## 本轮规则（定稿，别翻案）：
+##   · 没有血量：**狗进入（空的）肉格 = 玩家输**
+##   · 狗贴肉必须先低吼一回合（前摇），低吼后再进才算吃到
+##   · 肉格上有猫 => 狗吃掉那只猫（站肉格的猫永不受保护），狗停在原地、低吼清零
+##   · 撞飞 = 吃子：狗吃掉相邻未受保护的猫并移动到那一格
+##   · 胜利 = 狗没有任何合法动作（见 Encircle.legal_actions）
 
 const ONGOING := "ongoing"
 const WON := "won"
 const LOST := "lost"
 
 
-## 玩家走一步 -> 狗立刻行动 -> 回合末腐坏 -> 结算。
+## 玩家走一步 + 狗行动。求解器 / 关卡搜索 / 实战共用这一份。
 ## 返回 { "outcome": ONGOING/WON/LOST, "reason": String }
-## reason 是语言无关的 code，屏幕文案由表现层映射（ARCHITECTURE 8.2）。
+## reason 是语言无关的 code，屏幕文案由表现层映射（ARCHITECTURE 9.5）。
 static func apply_turn(state: GameState, config: Dictionary, cat_index: int, to: Vector2i) -> Dictionary:
-	state.cats[cat_index]["pos"] = to
+	if cat_index >= 0 and cat_index < state.cats.size():
+		state.cats[cat_index]["pos"] = to
 	state.turn += 1
+	return apply_dog_turn(state, config)
 
-	# ① 玩家这一步可能直接把狗围死了
+
+## 狗行动 + 回合结算。控制器在「结束回合」时调这个。
+static func apply_dog_turn(state: GameState, config: Dictionary) -> Dictionary:
+	# ① 玩家刚走完就把狗堵死了 => 直接赢，别让狗再动
 	if Encircle.is_encircled(state):
 		return { "outcome": WON, "reason": "encircled" }
 
@@ -28,28 +38,29 @@ static func apply_turn(state: GameState, config: Dictionary, cat_index: int, to:
 	var action := DogAI.plan(state)
 	match String(action["kind"]):
 		"eat":
-			state.meat_hp -= cfg_int(config, "meat", "bite_damage", 3)
+			return { "outcome": LOST, "reason": "meat_eaten" }
+		"growl":
+			state.growling = true
 		"move":
 			state.dog["pos"] = action["to"]
+			state.growling = false
 		"flick":
-			var victim: int = action["cat"]
+			var victim: int = int(action["cat"])
+			var cell: Vector2i = action["to"]
+			if cell != state.meat_pos:
+				state.dog["pos"] = cell          # 吃子 = 走到那一格
+			# 肉格上的猫被吃掉后狗进不去，低吼清零 —— 玩家又争取到一回合
 			state.cats[victim]["pos"] = Respawn.pick_cell(state)
+			state.growling = false
 		_:
-			# DogAI 说没动作 = 围死
 			return { "outcome": WON, "reason": "encircled" }
 
 	# ③ 狗自己把自己走死了也算赢，别等玩家再瞎走一步才结算
 	if Encircle.is_encircled(state):
 		return { "outcome": WON, "reason": "encircled" }
 
-	# ④ 回合末自然腐坏
-	state.meat_hp -= cfg_int(config, "meat", "decay_per_turn", 1)
-
-	# ⑤ 胜负
-	if state.meat_hp <= 0:
-		state.meat_hp = 0
-		return { "outcome": LOST, "reason": "meat_gone" }
-	if state.turn >= state.max_turns:
+	# ④ 回合上限
+	if state.max_turns > 0 and state.turn >= state.max_turns:
 		return { "outcome": LOST, "reason": "timeout" }
 
 	return { "outcome": ONGOING, "reason": "" }

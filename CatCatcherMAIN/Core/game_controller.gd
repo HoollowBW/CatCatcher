@@ -1,9 +1,9 @@
 class_name GameController
 extends RefCounted
-## 回合流程：玩家动 1 只猫 -> 狗立刻行动 -> 回合结算（腐坏 / 胜负）。
+## 回合流程：玩家挑一只猫走一步（这一回合内可以无限撤销）-> 结束回合 -> 狗行动 -> 结算。
 ##
-## 悔棋 = 快照（ARCHITECTURE 5.1）。**每次玩家行动前**压一份 state.snapshot()，
-## 所以一次悔棋撤销的是"玩家这一步 + 狗那一步"的整个回合。不许写反向操作。
+## 【每回合只能移动一只猫一次】但**提交前随便撤**：state 里的那一步是"试探性"的，
+## 按「结束回合」才把狗放出来。悔棋 = 快照（ARCHITECTURE 6.1），不写反向操作。
 
 signal state_changed
 signal game_over(won: bool, reason: String)
@@ -16,7 +16,10 @@ var finished := false
 var won := false
 var result_reason := ""
 
+## 每回合开始前的快照，撤销一次 = 退回上一个已提交回合
 var _undo: Array = []
+## 本回合玩家是否已经走过一步
+var _moved := false
 
 
 func setup(lv: Level, cfg: Dictionary) -> void:
@@ -30,29 +33,57 @@ func restart() -> void:
 		return
 	state = level.to_state(config)
 	_undo.clear()
+	_moved = false
 	finished = false
 	won = false
 	result_reason = ""
 	state_changed.emit()
 
 
-# ------------------------------------------------------------ 玩家行动 ----
+# ------------------------------------------------------------ 玩家阶段 ----
 
-## 玩家把第 cat_index 只猫走到 to。走完立刻推进狗的行动并结算。
-## 非法走法返回 false，且不改任何状态。
-func try_move_cat(cat_index: int, to: Vector2i) -> bool:
-	if finished or state == null:
+## 试探性走一步：**不推进狗**，玩家还能撤销。本回合只能走一次。
+func move_cat(cat_index: int, to: Vector2i) -> bool:
+	if finished or state == null or _moved:
 		return false
 	if cat_index < 0 or cat_index >= state.cats.size():
 		return false
 	if not MoveRules.legal_moves(state, cat_index).has(to):
 		return false
 
-	# 悔棋快照必须在动手之前拍
 	_undo.append(state.snapshot())
+	state.cats[cat_index]["pos"] = to
+	_moved = true
+	state_changed.emit()
+	return true
 
-	# 结算逻辑在 Rules 里，和关卡搜索/求解器共用同一份（别在这儿再抄一遍）
-	var result := Rules.apply_turn(state, config, cat_index, to)
+
+func has_moved() -> bool:
+	return _moved
+
+
+## 撤销这一步（可以连撤，一直退回开局）
+func undo() -> bool:
+	if _undo.is_empty():
+		return false
+	state.restore(_undo.pop_back())
+	_moved = false
+	finished = false
+	won = false
+	result_reason = ""
+	state_changed.emit()
+	return true
+
+
+## 提交本回合：狗行动 + 结算。
+func end_turn() -> bool:
+	if finished or state == null or not _moved:
+		return false
+
+	state.turn += 1
+	var result := Rules.apply_dog_turn(state, config)
+	_moved = false
+
 	var outcome := String(result["outcome"])
 	if outcome == Rules.ONGOING:
 		state_changed.emit()
@@ -64,8 +95,7 @@ func try_move_cat(cat_index: int, to: Vector2i) -> bool:
 func _finish(is_win: bool, reason: String) -> void:
 	finished = true
 	won = is_win
-	result_reason = reason      # 语言无关的 code（encircled / meat_gone / timeout），
-	                            # 显示文字由表现层映射 —— Core 不产屏幕文案
+	result_reason = reason      # 语言无关的 code（encircled / meat_eaten / timeout）
 	state_changed.emit()
 	game_over.emit(is_win, reason)
 
@@ -81,7 +111,6 @@ func preview_dog_action() -> Dictionary:
 
 ## 「如果这只猫走到 to，狗会怎么动」—— 界面上的敌方行动预览。
 ## 走的是同一个 DogAI.plan，只是喂给它的是一份改过一步的副本。
-## 和 try_move_cat 保持同样的顺序：先判围死，再问狗。
 func preview_after(cat_index: int, to: Vector2i) -> Dictionary:
 	if state == null or cat_index < 0 or cat_index >= state.cats.size():
 		return {}
@@ -91,20 +120,3 @@ func preview_after(cat_index: int, to: Vector2i) -> Dictionary:
 	if Encircle.is_encircled(sim):
 		return { "kind": "encircled", "to": Vector2i.ZERO, "cat": -1 }
 	return DogAI.plan(sim)
-
-
-# ---------------------------------------------------------------- 悔棋 ----
-
-func can_undo() -> bool:
-	return not _undo.is_empty()
-
-
-func undo() -> bool:
-	if _undo.is_empty():
-		return false
-	state.restore(_undo.pop_back())
-	finished = false
-	won = false
-	result_reason = ""
-	state_changed.emit()
-	return true

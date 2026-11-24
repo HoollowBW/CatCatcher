@@ -4,6 +4,10 @@ extends SceneTree
 ##   godot --headless --script res://tests/selftest.gd
 ##
 ## 改完 Core/ 下任何东西都应该跑一遍。退出码 0 = 全过，1 = 有失败。
+##
+## 本轮规则（见 ARCHITECTURE 第 5 节）：没有 HP，狗进（空的）肉格玩家就输；
+## 狗贴肉要先低吼一回合；肉格可站一只猫（控制为 0、永不受保护），狗吃猫停在原地；
+## 撞飞 = 吃子，狗移动到那格；胜利 = 狗没有任何合法动作。
 
 var _pass := 0
 var _fail := 0
@@ -12,14 +16,13 @@ var _fail := 0
 func _initialize() -> void:
 	print("== CatCatcher selftest ==")
 	_test_move_rules()
-	_test_controlled()
-	_test_encircle()
+	_test_meat_cell()
 	_test_protection()
+	_test_dog_actions()
 	_test_dog_ai()
-	_test_respawn()
+	_test_rules()
 	_test_controller()
-	_test_win()
-	_test_lose()
+	_test_respawn()
 	_test_levels()
 
 	print("---- %d passed, %d failed ----" % [_pass, _fail])
@@ -28,32 +31,15 @@ func _initialize() -> void:
 
 # ------------------------------------------------------------- 用例数据 ----
 
-## 6x6，肉(2,1)，狗(3,4)，车(4,4) 马(2,4) 兵(3,5)，障碍(0,5)
-func _base_state() -> GameState:
+## 造局面。opts 里可给 meat / obstacles / growling / max_turns
+func _mk(dog_cell: Vector2i, cats: Array, opts := {}) -> GameState:
 	var s := GameState.new()
-	s.w = 6
-	s.h = 6
-	s.meat_pos = Vector2i(2, 1)
-	s.meat_hp = 20
-	s.max_turns = 12
-	s.obstacles = [Vector2i(0, 5)]
-	s.dog = { "type": "stray", "pos": Vector2i(3, 4) }
-	s.cats = [
-		{ "type": "rook", "pos": Vector2i(4, 4) },
-		{ "type": "horse", "pos": Vector2i(2, 4) },
-		{ "type": "pawn", "pos": Vector2i(3, 5) },
-	]
-	return s
-
-
-## 造一个"狗在 dog_cell、其余按 cats 摆"的干净局面（6x6，肉放 (5,5) 免得蹭到）
-func _state_with_dog_at(dog_cell: Vector2i, cats: Array) -> GameState:
-	var s := GameState.new()
-	s.w = 6
-	s.h = 6
-	s.meat_pos = Vector2i(5, 5)
-	s.meat_hp = 20
-	s.max_turns = 12
+	s.w = int(opts.get("w", 6))
+	s.h = int(opts.get("h", 6))
+	s.meat_pos = opts.get("meat", Vector2i(5, 5))
+	s.max_turns = int(opts.get("max_turns", 12))
+	s.obstacles = opts.get("obstacles", [])
+	s.growling = bool(opts.get("growling", false))
 	s.dog = { "type": "stray", "pos": dog_cell }
 	s.cats = []
 	for c in cats:
@@ -74,233 +60,278 @@ func _controller_for(state: GameState) -> GameController:
 	for c in state.cats:
 		lv.cat_spawns.append({ "type": c["type"], "pos": c["pos"] })
 
-	var cfg := { "meat": { "max_hp": state.meat_hp, "decay_per_turn": 1, "bite_damage": 3 } }
 	var gc := GameController.new()
-	gc.setup(lv, cfg)
+	gc.setup(lv, {})
 	return gc
 
 
 # ---------------------------------------------------------------- 用例 ----
 
 func _test_move_rules() -> void:
-	var s := _base_state()
-
-	# 车 (4,4)：整行 y=4 剩 5 格 + 整列 x=4 剩 5 格 = 10（自己那格不算）
-	_eq(MoveRules.reach_cells(s, 0).size(), 10, "车猫控制 10 格")
+	var s := _mk(Vector2i(0, 5), [{ "type": "rook", "pos": Vector2i(4, 4) }], { "meat": Vector2i(2, 1) })
+	_eq(MoveRules.reach_cells(s, 0).size(), 10, "车猫控制 10 格（4 行 + 4 列）")
 	_ok(MoveRules.reach_cells(s, 0).has(Vector2i(0, 4)), "车猫控制到行首")
-	_ok(MoveRules.reach_cells(s, 0).has(Vector2i(4, 0)), "车猫控制到列首")
+	_ok(not MoveRules.reach_cells(s, 0).has(s.meat_pos), "肉格不在控制范围里")
 
-	# 车遇障碍即停：(0,5) 不在同行列，另测一条 —— 兵 (3,5) 左边 (2,5) 可走
-	var s2 := _base_state()
-	s2.obstacles = [Vector2i(2, 4)]
-	var rook_cells := MoveRules.reach_cells(s2, 0)
-	_ok(not rook_cells.has(Vector2i(2, 4)), "车不再控制被障碍挡住的格")
-	_ok(not rook_cells.has(Vector2i(1, 4)), "车被障碍挡住后，后面的格也不控制")
+	# 障碍挡住：车看不见后面的格
+	var blocked := _mk(Vector2i(0, 5), [{ "type": "rook", "pos": Vector2i(4, 4) }],
+		{ "meat": Vector2i(2, 1), "obstacles": [Vector2i(2, 4)] })
+	_ok(not MoveRules.reach_cells(blocked, 0).has(Vector2i(2, 4)), "车不控制障碍格")
+	_ok(not MoveRules.reach_cells(blocked, 0).has(Vector2i(1, 4)), "障碍后面也不控制")
 
-	# 马 (2,4)：8 个日字里 (3,6)/(1,6) 出界、(0,5) 是障碍 => 5 格
-	_eq(MoveRules.reach_cells(s, 1).size(), 5, "马猫控制 5 格")
+	# 象：斜线；8 格（从 (2,2) 出发 4 条对角线共 8 格可达）
+	var bishop := _mk(Vector2i(0, 5), [{ "type": "bishop", "pos": Vector2i(2, 2) }], { "meat": Vector2i(5, 5) })
+	_ok(MoveRules.reach_cells(bishop, 0).has(Vector2i(0, 0)), "象控制到对角")
+	_ok(not MoveRules.reach_cells(bishop, 0).has(Vector2i(2, 3)), "象不控制正交格")
 
-	# 兵 (3,5)：上(3,4) 左(2,5) 右(4,5)，下出界 => 3 格
-	_eq(MoveRules.reach_cells(s, 2).size(), 3, "兵猫控制 3 格")
+	# 马：8 个日字，出界丢弃
+	var horse := _mk(Vector2i(0, 5), [{ "type": "horse", "pos": Vector2i(2, 2) }], { "meat": Vector2i(5, 5) })
+	_eq(MoveRules.reach_cells(horse, 0).size(), 8, "马在中间控制 8 格")
 
-	# 可走格要再排掉 猫占据的格 + 狗占据的格
-	# 车控制 10 格里，(2,4) 有马、(3,4) 有狗 => 8
-	_eq(MoveRules.legal_moves(s, 0).size(), 8, "车猫可走 8 格（排掉马和狗）")
-	_ok(not MoveRules.legal_moves(s, 2).has(Vector2i(3, 4)), "兵猫不能走到狗身上")
-
-	# 肉的格谁都不能踩
-	_ok(not MoveRules.reach_cells(s, 0).has(s.meat_pos), "车猫控制范围不含肉的格")
-
-
-func _test_controlled() -> void:
-	var s := _base_state()
-	var ctrl := MoveRules.controlled_cells(s)
-	_ok(ctrl.has(Vector2i(3, 4)), "狗所在格被控制（界面要画警示描边）")
-	_ok(not ctrl.is_empty(), "控制范围非空")
+	# 可走格要排掉其它猫和狗
+	var crowded := _mk(Vector2i(3, 4), [
+		{ "type": "rook", "pos": Vector2i(4, 4) },
+		{ "type": "pawn", "pos": Vector2i(4, 5) },
+	], { "meat": Vector2i(2, 1) })
+	_ok(not MoveRules.legal_moves(crowded, 1).has(Vector2i(4, 4)), "兵不能走到车上")
+	_ok(not MoveRules.legal_moves(crowded, 0).has(Vector2i(3, 4)), "车不能走到狗身上")
 
 
-func _test_encircle() -> void:
-	var s := _base_state()
-	# 狗(3,4) 四邻：(3,3) 空且未被控 => 唯一的可走格；
-	# 旁边 3 只猫里，马(2,4) 落在车(4,4) 的整行控制范围内 => **受保护，撞不动**
-	_eq(Encircle.movable_cells(s).size(), 1, "开局狗只有 1 个可走格")
-	_eq(Encircle.flickable_cats(s).size(), 2, "开局只有 2 只猫撞得动（马被车保护）")
-	_eq(Encircle.legal_actions(s).size(), 3, "完整动作表 = 1 走 + 2 撞")
-	if not Encircle.is_encircled(s):
-		_pass += 1
-	else:
-		_fail += 1
-		printerr("  FAIL: 开局不该是围死")
+## 肉格的专属规则
+func _test_meat_cell() -> void:
+	# 1) 空的肉格是"走法可落点"，但不算控制格
+	var s := _mk(Vector2i(5, 5), [{ "type": "pawn", "pos": Vector2i(1, 1) }], { "meat": Vector2i(1, 0) })
+	_eq(MoveRules.reach_cells(s, 0).size(), 3, "兵的控制范围不含肉格（3 格）")
+	_ok(MoveRules.legal_moves(s, 0).has(Vector2i(1, 0)), "兵可以走进空的肉格")
+	_eq(MoveRules.legal_moves(s, 0).size(), 4, "兵的走法含肉格（4 格）")
 
-	# 【回归】四邻全被猫堵死 => 必须判围死。
-	# 早先"相邻有猫就还能撞飞"的写法会让玩家看着明明困死了却不结算。
-	var surrounded := _state_with_dog_at(Vector2i(2, 2), [
-		{ "type": "pawn", "pos": Vector2i(2, 1) },
-		{ "type": "pawn", "pos": Vector2i(2, 3) },
-		{ "type": "pawn", "pos": Vector2i(1, 2) },
-		{ "type": "pawn", "pos": Vector2i(3, 2) },
-	])
-	_eq(Encircle.movable_cells(surrounded).size(), 0, "四邻全是猫时没有可走格")
-	if Encircle.is_encircled(surrounded):
-		_pass += 1
-	else:
-		_fail += 1
-		printerr("  FAIL: 被四只猫围住必须判围死")
-	_eq(String(DogAI.plan(surrounded)["kind"]), "none", "被围住时狗没有动作")
+	# 2) 车能"看穿"肉格，只是肉格自己不算控制
+	var through := _mk(Vector2i(5, 5), [{ "type": "rook", "pos": Vector2i(0, 0) }], { "meat": Vector2i(2, 0) })
+	_ok(not MoveRules.reach_cells(through, 0).has(Vector2i(2, 0)), "肉格不进控制范围")
+	_ok(MoveRules.reach_cells(through, 0).has(Vector2i(3, 0)), "车能看穿肉格控制后面的格")
+
+	# 3) 站在肉格上的猫：控制为 0，也没有走法
+	var on_meat := _mk(Vector2i(5, 5), [
+		{ "type": "rook", "pos": Vector2i(2, 0) },
+		{ "type": "pawn", "pos": Vector2i(0, 4) },
+	], { "meat": Vector2i(2, 0) })
+	_eq(MoveRules.reach_cells(on_meat, 0).size(), 0, "站肉格的车控制为 0")
+	_eq(MoveRules.legal_moves(on_meat, 0).size(), 0, "站肉格的猫走不了（走法=控制）")
+
+	# 4) 肉格已经有猫时，别的猫不能再踩上去
+	var taken := _mk(Vector2i(5, 5), [
+		{ "type": "pawn", "pos": Vector2i(2, 0) },
+		{ "type": "pawn", "pos": Vector2i(1, 1) },
+	], { "meat": Vector2i(2, 0) })
+	_ok(not MoveRules.legal_moves(taken, 1).has(Vector2i(2, 0)), "肉格只让站一只猫")
 
 
-## 受保护的猫不能被撞飞（国际象棋那套）
+## 受保护的猫吃不动；但站肉格的猫永远吃得到
 func _test_protection() -> void:
-	# 两只车并排：互相在对方的整行控制范围内 => 都受保护
-	var s := _state_with_dog_at(Vector2i(2, 2), [
+	var s := _mk(Vector2i(2, 2), [
 		{ "type": "rook", "pos": Vector2i(2, 3) },
 		{ "type": "rook", "pos": Vector2i(4, 3) },
 	])
 	_ok(MoveRules.is_protected(s, 0), "同一行上的车保护彼此")
-	_eq(Encircle.flickable_cats(s).size(), 0, "受保护的猫一只都撞不动")
-	if not Encircle.is_flickable(s, 0):
-		_pass += 1
-	else:
-		_fail += 1
-		printerr("  FAIL: 受保护的猫不该能撞")
+	_eq(Encircle.flickable_cats(s).size(), 0, "受保护的猫一只都吃不到")
 
-	# 落单的猫（队友离得远）=> 撞得动
-	var lone := _state_with_dog_at(Vector2i(2, 2), [
+	var lone := _mk(Vector2i(2, 2), [
 		{ "type": "pawn", "pos": Vector2i(2, 3) },
 		{ "type": "pawn", "pos": Vector2i(0, 5) },
-	])
-	if not MoveRules.is_protected(lone, 0):
-		_pass += 1
-	else:
-		_fail += 1
-		printerr("  FAIL: 落单的猫不该算受保护")
-	_ok(Encircle.is_flickable(lone, 0), "落单的猫撞得动")
+	], { "meat": Vector2i(0, 4) })
+	_ok(not MoveRules.is_protected(lone, 0), "落单的猫不算受保护")
+	_ok(Encircle.is_flickable(lone, 0), "落单的猫吃得掉")
+
+	# 站肉格的猫：即使有车罩着肉格，它也不算受保护
+	var meat_cat := _mk(Vector2i(4, 4), [
+		{ "type": "pawn", "pos": Vector2i(5, 4) },
+		{ "type": "rook", "pos": Vector2i(5, 0) },
+	], { "meat": Vector2i(5, 4) })
+	_ok(not MoveRules.is_protected(meat_cat, 0), "站肉格的猫永不受保护")
+	_ok(Encircle.is_flickable(meat_cat, 0), "站肉格的猫永远吃得到")
+
+
+## 狗的动作表 = 围死判定的依据
+func _test_dog_actions() -> void:
+	# ① 四邻全被控制、旁边没猫、肉也不贴 => 围死
+	var mated := _mk(Vector2i(2, 2), [
+		{ "type": "rook", "pos": Vector2i(2, 0) },
+		{ "type": "rook", "pos": Vector2i(0, 2) },
+	], { "meat": Vector2i(5, 5) })
+	_eq(Encircle.movable_cells(mated).size(), 0, "四邻全被控制时没有可走格")
+	_ok(Encircle.is_encircled(mated), "四邻全被控制 + 无猫可吃 => 围死")
+	_ok(Encircle.legal_actions(mated).is_empty(), "围死时动作表为空")
+
+	# ② 贴着空肉格 => 有动作（低吼），不算围死
+	var near_meat := _mk(Vector2i(4, 4), [{ "type": "rook", "pos": Vector2i(2, 0) }], { "meat": Vector2i(5, 4) })
+	_eq(String(Encircle.meat_action(near_meat)["kind"]), "growl", "贴肉且没低吼 => 低吼")
+	_ok(not Encircle.is_encircled(near_meat), "贴肉的狗永远不算围死")
+
+	near_meat.growling = true
+	_eq(String(Encircle.meat_action(near_meat)["kind"]), "eat", "贴肉 + 已低吼 => 吃肉")
+
+	# ③ 肉格上有猫 => 吃掉那只猫（于是永远有动作）
+	var plugged := _mk(Vector2i(4, 4), [
+		{ "type": "rook", "pos": Vector2i(2, 0) },
+		{ "type": "pawn", "pos": Vector2i(5, 4) },
+	], { "meat": Vector2i(5, 4) })
+	var act := Encircle.meat_action(plugged)
+	_eq(String(act["kind"]), "flick", "肉格有猫 => 吃掉它")
+	_eq(int(act["cat"]), 1, "吃的是垫在肉上的那只")
+	_ok(not Encircle.is_encircled(plugged), "肉格有猫时也不算围死")
+
+	# ④ 旁边蹲着吃得掉的猫 => 仍有动作
+	# ⚠️ 注意别让挡路的猫落进另一只猫的控制范围（那就受保护了）：
+	#    车(0,2) 控住 (1,2)/(3,2)，兵(2,0) 只控 (2,1)，(2,3) 上的兵没被谁罩着。
+	var edible := _mk(Vector2i(2, 2), [
+		{ "type": "rook", "pos": Vector2i(0, 2) },
+		{ "type": "pawn", "pos": Vector2i(2, 0) },
+		{ "type": "pawn", "pos": Vector2i(2, 3) },
+	], { "meat": Vector2i(5, 5) })
+	_ok(not Encircle.is_encircled(edible), "旁边有吃得掉的猫 => 不是围死")
 
 
 func _test_dog_ai() -> void:
-	var s := _base_state()
+	# 朝肉走：狗(2,2) 离肉(5,5) 是 6，(2,3) 才是 5（(2,1) 反而更远 7）
+	var s := _mk(Vector2i(2, 2), [{ "type": "rook", "pos": Vector2i(0, 0) }], { "meat": Vector2i(5, 5) })
 	var p := DogAI.plan(s)
-	_eq(String(p["kind"]), "move", "狗开局应该往肉走")
-	_eq(p["to"], Vector2i(3, 3), "狗往 (3,3) 走（离肉最近）")
+	_eq(String(p["kind"]), "move", "狗贪心朝肉走")
+	_eq(p["to"], Vector2i(2, 3), "走向离肉更近的那格")
 
-	# 贴着肉就该啃，优先于移动
-	var s2 := _base_state()
-	s2.dog = { "type": "stray", "pos": Vector2i(3, 1) }
-	s2.cats = []
-	_eq(String(DogAI.plan(s2)["kind"]), "eat", "相邻肉时优先啃食")
+	# 贴肉：低吼 -> 吃肉
+	var g := _mk(Vector2i(4, 4), [], { "meat": Vector2i(5, 4) })
+	_eq(String(DogAI.plan(g)["kind"]), "growl", "贴肉先低吼")
+	g.growling = true
+	_eq(String(DogAI.plan(g)["kind"]), "eat", "低吼之后吃肉")
 
-	# 朝肉那一格蹲着猫、但狗还有别的路 => 撞飞那只猫
-	var blocker := _state_with_dog_at(Vector2i(2, 2), [
-		{ "type": "pawn", "pos": Vector2i(2, 3) },   # 正好挡在朝肉的方向上
-		{ "type": "pawn", "pos": Vector2i(0, 5) },
-	])
-	var p3 := DogAI.plan(blocker)
-	_eq(String(p3["kind"]), "flick", "朝肉方向被猫挡住时撞飞它")
-	_eq(p3["to"], Vector2i(2, 3), "撞的是挡路那只")
+	# 肉格有猫：先吃猫
+	var plugged := _mk(Vector2i(4, 4), [{ "type": "pawn", "pos": Vector2i(5, 4) }], { "meat": Vector2i(5, 4) })
+	_eq(String(DogAI.plan(plugged)["kind"]), "flick", "肉格有猫时先吃猫")
+
+	# 朝肉方向被吃得掉的猫挡住：吃掉它（挡在狗真正想走的 (2,3) 上）
+	var blocker := _mk(Vector2i(2, 2), [{ "type": "pawn", "pos": Vector2i(2, 3) }], { "meat": Vector2i(5, 5) })
+	var p2 := DogAI.plan(blocker)
+	_eq(String(p2["kind"]), "flick", "朝肉方向被落单的猫挡住 => 吃掉它")
+	_eq(p2["to"], Vector2i(2, 3), "吃的是挡路那只")
+
+	# 围死 => none
+	var mated := _mk(Vector2i(2, 2), [
+		{ "type": "rook", "pos": Vector2i(2, 0) },
+		{ "type": "rook", "pos": Vector2i(0, 2) },
+	], { "meat": Vector2i(5, 5) })
+	_eq(String(DogAI.plan(mated)["kind"]), "none", "被围死时狗没有动作")
 
 
-func _test_respawn() -> void:
-	var s := _base_state()
-	# 主战场 = {狗(3,4), 肉(2,1)}。最远的空格应该是 (5,0)
-	_eq(Respawn.pick_cell(s), Vector2i(5, 0), "投放点取离狗和肉都远的一端")
-	# 确定性：连算两次必须一致
-	_eq(Respawn.pick_cell(s), Respawn.pick_cell(s), "投放点确定性")
+## 一个回合的结算
+func _test_rules() -> void:
+	var cfg := {}
+
+	# 低吼：不动、growling 置真
+	var s := _mk(Vector2i(4, 4), [{ "type": "rook", "pos": Vector2i(0, 0) }], { "meat": Vector2i(5, 4) })
+	var r := Rules.apply_dog_turn(s, cfg)
+	_eq(String(r["outcome"]), Rules.ONGOING, "低吼不结束对局")
+	_ok(s.growling, "低吼后进入前摇状态")
+	_eq(s.dog["pos"], Vector2i(4, 4), "低吼那回合狗不动")
+
+	# 前摇完成 => 吃到肉 => 玩家输
+	s.growling = true
+	r = Rules.apply_dog_turn(s, cfg)
+	_eq(String(r["outcome"]), Rules.LOST, "贴肉 + 已低吼 => 玩家输")
+	_eq(String(r["reason"]), "meat_eaten", "失败原因是吃到肉")
+
+	# 撞飞 = 吃子：狗移动到那一格
+	var eatcat := _mk(Vector2i(2, 2), [{ "type": "pawn", "pos": Vector2i(2, 3) }], { "meat": Vector2i(5, 5) })
+	var victim_pos := Vector2i(2, 3)
+	r = Rules.apply_dog_turn(eatcat, cfg)
+	_eq(String(r["outcome"]), Rules.ONGOING, "吃子不结束对局")
+	_eq(eatcat.dog["pos"], Vector2i(2, 3), "吃子后狗站在被吃掉的猫那格")
+	_ok(eatcat.cats[0]["pos"] != victim_pos, "被吃掉的猫被投放到远处")
+
+	# 吃垫在肉上的猫：狗停在原地，低吼清零
+	var plug := _mk(Vector2i(4, 4), [{ "type": "pawn", "pos": Vector2i(5, 4) }],
+		{ "meat": Vector2i(5, 4), "growling": true })
+	r = Rules.apply_dog_turn(plug, cfg)
+	_eq(String(r["outcome"]), Rules.ONGOING, "吃掉垫肉的猫不算吃到肉")
+	_eq(plug.dog["pos"], Vector2i(4, 4), "吃垫肉的猫后狗停在原地")
+	_ok(not plug.growling, "吃掉垫肉的猫后低吼清零")
+	_ok(plug.cat_at(Vector2i(5, 4)) == -1, "肉格空出来了")
+
+	# 玩家走完就把狗堵死 => 直接赢
+	var win_state := _mk(Vector2i(2, 2), [
+		{ "type": "rook", "pos": Vector2i(2, 0) },
+		{ "type": "rook", "pos": Vector2i(0, 3) },
+	], { "meat": Vector2i(5, 5) })
+	# 车 (0,3) -> (0,2) 之后控制 (1,2)/(3,2)... 用围死局面直接验 apply_dog_turn 的入口判定
+	var mated := _mk(Vector2i(2, 2), [
+		{ "type": "rook", "pos": Vector2i(2, 0) },
+		{ "type": "rook", "pos": Vector2i(0, 2) },
+	], { "meat": Vector2i(5, 5) })
+	r = Rules.apply_dog_turn(mated, cfg)
+	_eq(String(r["outcome"]), Rules.WON, "已经围死 => 直接判赢")
+	_eq(String(r["reason"]), "encircled", "胜利原因 encircled")
+	_ok(win_state.cats.size() == 2, "（构造用例健康）")
+
+	# 回合上限
+	var late := _mk(Vector2i(4, 4), [{ "type": "rook", "pos": Vector2i(5, 0) }],
+		{ "meat": Vector2i(0, 0), "max_turns": 1 })
+	r = Rules.apply_turn(late, cfg, 0, Vector2i(5, 1))
+	_eq(String(r["outcome"]), Rules.LOST, "回合数用尽 => 玩家输")
+	_eq(String(r["reason"]), "timeout", "失败原因 timeout")
 
 
 func _test_controller() -> void:
-	var gc := _controller_for(_base_state())
-	_eq(gc.state.turn, 0, "开局回合 0")
-	_eq(gc.state.meat_hp, 20, "开局肉 HP 20")
+	var gc := _controller_for(_mk(Vector2i(2, 2), [
+		{ "type": "rook", "pos": Vector2i(4, 4) },
+	], { "meat": Vector2i(0, 0) }))
 
-	# 非法走法不改状态
-	if not gc.try_move_cat(0, Vector2i(0, 0)):
+	_eq(gc.state.turn, 0, "开局回合 0")
+	# 非法走法不改状态（车在 (4,4)，(0,0) 不在它的行列上；肉也在 (0,0) 之外）
+	if not gc.move_cat(0, Vector2i(0, 0)):
 		_pass += 1
 	else:
 		_fail += 1
 		printerr("  FAIL: 非法走法应返回 false")
-	_eq(gc.state.turn, 0, "非法走法不推进回合")
 
-	# 车 (4,4) -> (4,5)：这一步不会围死狗（(3,3) 还能走），用来测整回合流程
-	_ok(gc.try_move_cat(0, Vector2i(4, 5)), "合法走法返回 true")
-	_eq(gc.state.turn, 1, "走完推进到回合 1")
-	_eq(gc.state.meat_hp, 19, "回合末腐坏 -1")
-	_ok(not gc.finished, "这一步没有结束对局")
-	_eq(gc.state.dog["pos"], Vector2i(3, 3), "狗朝肉走了一格")
+	# 试探性移动：狗不动、回合不推进
+	_ok(gc.move_cat(0, Vector2i(4, 3)), "合法走法返回 true")
+	_eq(gc.state.turn, 0, "提交前不推进回合")
+	_eq(gc.state.dog["pos"], Vector2i(2, 2), "提交前狗不动")
+	_ok(gc.has_moved(), "本回合已走过一步")
 
-	# 悔棋回到动手之前
-	_ok(gc.can_undo(), "有可悔的回合")
-	_ok(gc.undo(), "悔棋成功")
-	_eq(gc.state.turn, 0, "悔棋回到回合 0")
-	_eq(gc.state.meat_hp, 20, "悔棋回到 HP 20")
-	_eq(gc.state.cats[0]["pos"], Vector2i(4, 4), "悔棋把车放回原位")
-	_eq(gc.state.dog["pos"], Vector2i(3, 4), "悔棋把狗放回原位")
-	if not gc.can_undo():
+	# 一回合只能走一只猫一次
+	if not gc.move_cat(0, Vector2i(4, 2)):
 		_pass += 1
 	else:
 		_fail += 1
-		printerr("  FAIL: 悔到底后不该还能悔")
+		printerr("  FAIL: 一回合内不该能走第二次")
 
-	# 重开
-	_ok(gc.try_move_cat(0, Vector2i(4, 5)), "重开测试：先走一步")
-	gc.restart()
-	_eq(gc.state.turn, 0, "重开回到回合 0")
-	_eq(gc.state.meat_hp, 20, "重开回满 HP")
+	# 撤销回原位
+	_ok(gc.undo(), "撤销成功")
+	_eq(gc.state.cats[0]["pos"], Vector2i(4, 4), "撤销把车放回去")
+	_ok(not gc.has_moved(), "撤销后可以重走")
 
-	# 预览和实战走同一个 DogAI
-	var preview := gc.preview_after(0, Vector2i(4, 5))
+	# 结束回合 => 狗行动
+	_ok(gc.move_cat(0, Vector2i(4, 3)), "重新走一步")
+	_ok(gc.end_turn(), "结束回合成功")
+	_eq(gc.state.turn, 1, "结束回合后推进到回合 1")
+	_eq(gc.state.dog["pos"], Vector2i(2, 1), "狗朝肉走了一格")
+
+	# 预览：这一步之后狗会做什么
+	var preview := gc.preview_after(0, Vector2i(4, 2))
 	_ok(preview.has("kind"), "预览返回了动作")
-	_eq(String(preview["kind"]), "move", "预览：这一步之后狗会走一格")
-
-	# 车 (4,4) -> (4,3) 会把狗彻底堵死 => 预览应当提前告诉玩家"这一步就赢了"
-	var lethal := gc.preview_after(0, Vector2i(4, 3))
-	_eq(String(lethal["kind"]), "encircled", "预览：这一步直接围死")
 
 
-## 狗被围死 => 直接判赢。车(1,1) 同时控住 (1,0) 和 (0,1)，狗缩在 (0,0) 且旁边没猫。
-func _test_win() -> void:
-	var s := GameState.new()
-	s.w = 6
-	s.h = 6
-	s.meat_pos = Vector2i(5, 5)
-	s.meat_hp = 20
-	s.max_turns = 12
-	s.dog = { "type": "stray", "pos": Vector2i(0, 0) }
-	s.cats = [{ "type": "rook", "pos": Vector2i(1, 1) }]
-
-	if Encircle.is_encircled(s):
-		_pass += 1
-	else:
-		_fail += 1
-		printerr("  FAIL: (0,0) 的狗应被判定围死")
-	_ok(Encircle.legal_actions(s).is_empty(), "围死时没有任何合法动作")
-
-	var gc := _controller_for(s)
-	gc.restart()
-	if gc.state != null:
-		_pass += 1
-	else:
-		_fail += 1
-		printerr("  FAIL: 围死局面也该能构建控制器")
-
-
-## 肉 HP 归零 => 判负
-func _test_lose() -> void:
-	var s := _base_state()
-	s.meat_hp = 1
-	var gc := _controller_for(s)
-	# 兵 (3,5) -> (4,5)，这一步不围死狗，狗会走一步，然后腐坏 -1 => 0
-	_ok(gc.try_move_cat(2, Vector2i(4, 5)), "走兵这一步")
-	_ok(gc.finished, "HP 归零后对局结束")
-	if not gc.won:
-		_pass += 1
-	else:
-		_fail += 1
-		printerr("  FAIL: HP 归零应该是失败")
-	_eq(gc.state.meat_hp, 0, "HP 不会显示成负数")
+func _test_respawn() -> void:
+	var s := _mk(Vector2i(3, 4), [
+		{ "type": "rook", "pos": Vector2i(4, 4) },
+	], { "meat": Vector2i(2, 1) })
+	var cell := Respawn.pick_cell(s)
+	_ok(cell != s.dog["pos"], "投放点不在狗身上")
+	_ok(cell != s.meat_pos, "投放点不在肉格上")
+	_eq(cell, Respawn.pick_cell(s), "投放点确定性")
 
 
 ## 每关都必须：能构建、开局不是白送、求解器搜得到解。
-## 关卡改成场景之后不再有标准答案字段，所以这里直接用 Solver 验 —— 和启动校验同一套。
 func _test_levels() -> void:
 	var cfg := Level.load_config()
 	_ok(Levels.count() > 0, "至少有一关")
@@ -317,7 +348,6 @@ func _test_levels() -> void:
 		var gc := GameController.new()
 		gc.setup(lv, cfg)
 
-		# 单位数量要和场景里摆的一致（0 只猫/没狗没肉 = 场景摆错了）
 		_ok(gc.state.cats.size() > 0, "关卡 %d 至少有一只猫" % (i + 1))
 		_ok(not gc.state.dog.is_empty(), "关卡 %d 有狗" % (i + 1))
 		_ok(lv.meat_pos.x >= 0, "关卡 %d 有肉" % (i + 1))

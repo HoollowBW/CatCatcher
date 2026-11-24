@@ -62,7 +62,7 @@ static func from_dict(d: Dictionary) -> Level:
 	return lv
 
 
-## 关卡 + 全局配置 -> 开局状态。肉的 HP 来自 config，不从关卡读。
+## 关卡 + 全局配置 -> 开局状态。
 func to_state(config: Dictionary) -> GameState:
 	var s := GameState.new()
 	s.w = w
@@ -70,7 +70,7 @@ func to_state(config: Dictionary) -> GameState:
 	s.obstacles = obstacles.duplicate()
 	s.max_turns = max_turns
 	s.meat_pos = meat_pos
-	s.meat_hp = int(config.get("meat", {}).get("max_hp", 20))
+	s.growling = false
 	s.turn = 0
 
 	s.dog = { "type": dog_type, "pos": dog_pos }

@@ -17,8 +17,8 @@ const FONT_SMALL := 14
 ## Core 只给 code，屏幕文案在这里 —— 默认字体没有 CJK 字形，中文会画成空白
 const REASON_TEXT := {
 	"encircled": "the dog has nowhere to go",
-	"meat_gone": "the meat is gone",
-	"timeout": "the meat rotted away",
+	"meat_eaten": "the dog got the meat",
+	"timeout": "you ran out of turns",
 }
 
 var config: Dictionary
@@ -28,7 +28,6 @@ var controller: GameController
 var cell_size: int = 64
 var board_origin := Vector2i.ZERO
 var colors: Dictionary = {}
-var meat_max_hp: int = 20
 
 ## ---- 关卡场景与单位节点 ----
 var _level_root: Node2D = null      # 装着实例化进来的关卡场景
@@ -84,7 +83,6 @@ func _ready() -> void:
 	var o: Array = config["board"]["origin"]
 	board_origin = Vector2i(int(o[0]), int(o[1]))
 	colors = config["board"]["colors"]
-	meat_max_hp = int(config["meat"]["max_hp"])
 
 	controller = GameController.new()
 	controller.state_changed.connect(_on_state_changed)
@@ -153,10 +151,10 @@ func _start_level(index: int) -> void:
 	_clear_fx()          # 上一关的演出（闪白/文字/震屏）可能还没播完
 	queue_redraw()
 
-	print("[CatCatcher] 关卡 %d/%d %s | 猫 %d 只 | 狗 %s @ %s | 肉 @ %s | HP %d" % [
+	print("[CatCatcher] 关卡 %d/%d %s | 猫 %d 只 | 狗 %s @ %s | 肉 @ %s | 上限 %d 回合" % [
 		_level_index + 1, Levels.count(), level.display_name,
 		level.cat_spawns.size(), level.dog_type,
-		str(level.dog_pos), str(level.meat_pos), controller.state.meat_hp,
+		str(level.dog_pos), str(level.meat_pos), level.max_turns,
 	])
 
 
@@ -215,6 +213,11 @@ func _hint_due() -> bool:
 ## 提示 = 求解器从**当前局面**算出的第一步。
 ## 用当前局面而不是关卡里写死的序列 —— 玩家走偏了也还能拿到正确提示。
 func _update_hint() -> void:
+	# 本回合已经走过一步（等玩家按 END TURN）=> 这时候给"下一步"提示只会误导
+	if controller.has_moved():
+		_hint_step = {}
+		_hint_version = -1
+		return
 	if not _hint_due():
 		_hint_step = {}
 		_hint_version = -1
@@ -299,13 +302,22 @@ func _draw_focus_reach() -> void:
 
 
 ## 狗站在被控制的格上 => 红色描边（"它已经被罩住了"）
+## 狗贴着肉格 => 肉格描红；已经低吼过 => 加粗 + "EAT!"，这是最后的警告
 func _draw_dog_warning(controlled: Dictionary) -> void:
-	var dog_cell: Vector2i = controller.state.dog["pos"]
-	if not controlled.has(dog_cell):
-		return
+	var state := controller.state
+	var dog_cell: Vector2i = state.dog["pos"]
 	var dog_cfg: Dictionary = config.get("dog", {})
 	var width := float(dog_cfg.get("warning_width", 3))
-	draw_rect(_cell_rect(dog_cell), Color(String(dog_cfg.get("warning_outline", "#e03e3e"))), false, width)
+
+	if controlled.has(dog_cell):
+		draw_rect(_cell_rect(dog_cell), Color(String(dog_cfg.get("warning_outline", "#e03e3e"))), false, width)
+
+	var d: Vector2i = dog_cell - state.meat_pos
+	if absi(d.x) + absi(d.y) == 1:
+		var meat_rect := _cell_rect(state.meat_pos)
+		draw_rect(meat_rect, _color("growl"), false, width if state.growling else 2.0)
+		if state.growling:
+			_text_centered("EAT!", meat_rect.get_center().x, meat_rect.position.y - 8, FONT_MID, _color("growl"))
 
 
 ## 敌方行动预览 + 威胁范围：鼠标停在一个可走的格子上就显示。
@@ -337,6 +349,10 @@ func _draw_preview() -> void:
 		_text_centered("ENCIRCLED", dog_rect.get_center().x, dog_rect.position.y - 8, FONT_MID, Color("#7fb069"))
 		return
 	if kind == "none":
+		return
+	if kind == "growl":
+		var growl_rect := _cell_rect(controller.state.dog["pos"])
+		_text_centered("GROWL", growl_rect.get_center().x, growl_rect.position.y - 8, FONT_MID, warn)
 		return
 
 	var target: Vector2i = preview["to"]
@@ -492,19 +508,23 @@ func _draw_hud() -> void:
 	var state := controller.state
 	var bar_w := level.w * cell_size
 	var bar_pos := Vector2(board_origin.x, board_origin.y + level.h * cell_size + 14)
-	var bar := Rect2(bar_pos, Vector2(bar_w, 18))
 
-	draw_rect(bar, Color(0.13, 0.11, 0.09))
-	var frac := clampf(float(state.meat_hp) / float(maxi(meat_max_hp, 1)), 0.0, 1.0)
-	draw_rect(Rect2(bar.position, Vector2(bar.size.x * frac, bar.size.y)), _color("meat"))
-	draw_rect(bar, Color(0.55, 0.5, 0.44), false, 2.0)
-
-	_text("MEAT %d / %d" % [state.meat_hp, meat_max_hp], bar_pos + Vector2(0, 38), FONT_MID, Color(0.9, 0.87, 0.8))
-	_text("TURN %d / %d" % [state.turn, state.max_turns], bar_pos + Vector2(bar_w - 92, 38), FONT_MID, Color(0.9, 0.87, 0.8))
-	# 只显示关卡序号，不显示 level.display_name —— 那是中文，桌面端靠系统字体回退能画，
-	# web 版不一定有回退。关名字留给文档，M4 引入中文字体后再上屏。
+	_text("TURN %d / %d" % [state.turn, level.max_turns], bar_pos, FONT_MID, Color(0.9, 0.87, 0.8))
 	_text("LEVEL %d / %d" % [_level_index + 1, Levels.count()],
-		bar_pos + Vector2(0, 62), FONT_SMALL, Color(0.78, 0.74, 0.66))
+		bar_pos + Vector2(bar_w - 96, 0), FONT_MID, Color(0.9, 0.87, 0.8))
+
+	# 回合流程：走完一步只是"试探"，按 END TURN 提交后狗才会行动
+	if not controller.finished:
+		if controller.has_moved():
+			_text("END TURN = SPACE      UNDO = Z", bar_pos + Vector2(0, 26), FONT_MID, _color("selected"))
+		else:
+			_text("pick a cat, then a highlighted cell",
+				bar_pos + Vector2(0, 26), FONT_SMALL, Color(0.78, 0.74, 0.66))
+		# 狗已经低吼过 => 下一回合就吃肉了，这是最后的警告
+		if state.growling:
+			_text("THE DOG IS GROWLING - COVER THE MEAT!",
+				bar_pos + Vector2(0, 46), FONT_SMALL, _color("growl"))
+
 	_text("LMB pick / move     Z undo     R restart", bar_pos + Vector2(0, 84), FONT_SMALL, Color(0.62, 0.58, 0.5))
 
 	# 提示文字放棋盘右侧空白处，别挤 HUD 下面那点地方
@@ -751,9 +771,11 @@ func _unhandled_input(event: InputEvent) -> void:
 				_sync_units()
 			KEY_R:
 				_start_level(_level_index)      # 重开本关（不是从头玩）
-			KEY_SPACE:
+			KEY_SPACE, KEY_ENTER:
 				if controller.finished and controller.won and _has_next_level():
 					_start_level(_level_index + 1)
+				elif controller.has_moved():
+					_commit_turn()              # 提交回合 => 狗行动
 			KEY_ESCAPE:
 				_selected = -1
 		queue_redraw()
@@ -767,10 +789,10 @@ func _unhandled_input(event: InputEvent) -> void:
 	if cell.x < 0:
 		return
 
-	# 已经选了猫，且点的是合法落点 => 走这一步（狗会立刻行动）
+	# 已经选了猫，且点的是合法落点 => 试探性走这一步，**狗还不动**
 	if _selected >= 0 and not controller.finished:
 		if MoveRules.legal_moves(controller.state, _selected).has(cell):
-			_do_move(_selected, cell)
+			controller.move_cat(_selected, cell)
 			_selected = -1
 			_bump_version()
 			_update_hint()
@@ -782,26 +804,36 @@ func _unhandled_input(event: InputEvent) -> void:
 	queue_redraw()
 
 
-## 走这一步 + 顺带播受击反馈：狗啃肉 => 震屏红光；有猫被撞飞 => 原格烧一个残影。
-## 全靠"动手前后对比 state"判断，不需要 Core 额外回报发生了什么。
-func _do_move(cat_index: int, to: Vector2i) -> void:
-	var before_hp := controller.state.meat_hp
+## 提交回合：狗行动 + 顺带播反馈。
+## 全靠"动手前后对比 state"判断发生了什么，不需要 Core 额外回报。
+func _commit_turn() -> void:
+	var before_dog: Vector2i = controller.state.dog["pos"]
 	var before_cells: Array = []
 	for c in controller.state.cats:
 		before_cells.append(c["pos"])
 
-	controller.try_move_cat(cat_index, to)
+	controller.end_turn()
 
-	if controller.state.meat_hp <= before_hp - 2:
+	# 狗吃到肉 => 红光 + 震屏（结算演出接着上）
+	if controller.result_reason == "meat_eaten":
 		_punch_meat()
-
+		_shake(0.3, 8.0)
+	# 有猫被吃掉 => 原格烧个残影（和以前撞飞同一套表现）
 	for i in controller.state.cats.size():
-		var now: Vector2i = controller.state.cats[i]["pos"]
-		if i == cat_index:
-			continue
-		if now != before_cells[i]:
+		if i >= before_cells.size():
+			break
+		if controller.state.cats[i]["pos"] != before_cells[i]:
 			_spawn_dissolve_ghost(_cat_nodes[i] if i < _cat_nodes.size() else null, before_cells[i])
 			_shake(0.2, 5.0)
+	# 狗自己挪了窝 => 轻震一下
+	if controller.state.dog["pos"] != before_dog:
+		_shake(0.15, 3.0)
+
+	_selected = -1
+	_bump_version()
+	_update_hint()
+	_sync_units()
+	queue_redraw()
 
 
 func _on_game_over(is_win: bool, _reason: String) -> void:

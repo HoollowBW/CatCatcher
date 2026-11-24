@@ -1,15 +1,19 @@
 class_name Encircle
 extends RefCounted
-## 狗的去路 + 围死判定。纯计算，不碰节点。
+## 狗的动作表 + 围死判定。纯计算，不碰节点。
 ##
-## 【核心机制，定稿】控制 = 硬阻挡：狗**不能**走进被任意一只猫控制的格。
+## 【核心机制】控制 = 硬阻挡：狗不能走进被任意一只猫控制的格。
+## 【撞飞 = 吃子】狗吃掉相邻的**未受保护**的猫，并移动到那一格（受保护 = 撞不动）。
+## 【肉】狗贴着肉格时永远有动作：
+##     肉格空 + 没低吼  -> 低吼
+##     肉格空 + 已低吼  -> 吃到肉（玩家输）
+##     肉格上有猫       -> 吃掉那只猫（站肉格的猫永不受保护），狗停在原地、低吼清零
+##    ⇒ 所以**狗一旦贴身，就再也围不死了**，玩家必须在它离肉 ≥2 格时动手。
 ##
-## 【围死 = 没有空的可走格】相邻的猫**不算逃生路**。
-## 早先的写法是"没有空格且相邻没有猫"，结果四邻被猫团团围住时狗还能一直「撞飞」苟着，
-## 玩家看着明明困死了却不结算 —— 那不是玩家该去理解的东西，是规则没写对。
+## 【围死 = 狗没有任何合法动作】走、吃子、对肉动作都算动作。这是新的胜利条件。
 
-## 狗能真正走到的格：空、未被控制、不是肉。
-## **这才是"去路"**，围死判定只看它。
+## 狗能走进去的格：空、未被控制、不是肉格、不在墙上。
+## 注意肉格不在这里 —— 进肉格是"吃到肉"，属于对肉动作（见 meat_action）。
 static func movable_cells(state: GameState) -> Array:
 	var out := []
 	var controlled := MoveRules.controlled_cells(state)
@@ -30,10 +34,8 @@ static func movable_cells(state: GameState) -> Array:
 	return out
 
 
-## 相邻的、**可以被撞飞**的猫。顺序由方向表决定 => 确定性。
-##
-## ⚠️ 被别的猫保护的猫撞不动（国际象棋的"受保护棋子"，见 ARCHITECTURE）。
-## 所以站成一排互相罩着的猫，狗一只都拍不飞 —— 撞飞只对落单的猫有效。
+## 相邻的、**吃得掉**的猫（没被别的猫保护）。顺序由方向表决定 => 确定性。
+## 站肉格的猫永远可吃（MoveRules.is_protected 里已经把这条写死了）。
 static func flickable_cats(state: GameState) -> Array:
 	var out := []
 	var dog: Vector2i = state.dog["pos"]
@@ -50,27 +52,49 @@ static func flickable_cats(state: GameState) -> Array:
 	return out
 
 
-## 这只猫现在能不能被撞飞（相邻 + 没被保护）
+## 这只猫现在能不能被吃（相邻 + 没被保护）
 static func is_flickable(state: GameState, cat_index: int) -> bool:
 	if cat_index < 0 or cat_index >= state.cats.size():
 		return false
 	var cell: Vector2i = state.cats[cat_index]["pos"]
 	if MoveRules.is_protected(state, cat_index):
 		return false
-	return absi(cell.x - state.dog["pos"].x) + absi(cell.y - state.dog["pos"].y) == 1
+	return _manhattan(cell, state.dog["pos"]) == 1
 
 
-## 围死判定。独立成函数是硬要求 —— 求解器（M3）要直接调它。
-static func is_encircled(state: GameState) -> bool:
-	return movable_cells(state).is_empty()
+## 狗贴着肉格时"对肉"的动作。不贴肉返回 {}。
+## 返回 { "kind": "growl" / "eat" / "flick", "to": Vector2i, "cat": int }
+static func meat_action(state: GameState) -> Dictionary:
+	var dog: Vector2i = state.dog["pos"]
+	if _manhattan(dog, state.meat_pos) != 1:
+		return {}
+
+	var blocker := state.cat_at(state.meat_pos)
+	if blocker != -1:
+		return { "kind": "flick", "to": state.meat_pos, "cat": blocker }
+	if state.growling:
+		return { "kind": "eat", "to": state.meat_pos, "cat": -1 }
+	return { "kind": "growl", "to": dog, "cat": -1 }
 
 
-## 给表现层用的完整动作表（走 + 撞飞），用来画"威胁范围"。
-## ⚠️ 不要拿它判围死 —— 里面有撞飞，那会让"被围住"永远判不出来。
+## 给表现层用的完整动作表（走 + 吃子 + 对肉）。
+## 这**就是**围死判定的依据：空表才算玩家赢。
 static func legal_actions(state: GameState) -> Array:
 	var out := []
 	for cell in movable_cells(state):
 		out.append({ "kind": "move", "to": cell, "cat": -1 })
 	for flick in flickable_cats(state):
 		out.append({ "kind": "flick", "to": flick["cell"], "cat": flick["cat"] })
+	var meat := meat_action(state)
+	if not meat.is_empty() and String(meat["kind"]) != "flick":
+		out.append(meat)
 	return out
+
+
+## 围死判定 = 狗没有任何合法动作。独立成函数是硬要求 —— 求解器直接调它。
+static func is_encircled(state: GameState) -> bool:
+	return legal_actions(state).is_empty()
+
+
+static func _manhattan(a: Vector2i, b: Vector2i) -> int:
+	return absi(a.x - b.x) + absi(a.y - b.y)
