@@ -43,6 +43,9 @@ godot --headless --path . --quit
 
 # 从导出的 pck 运行 —— 这才是 web 版真实的数据加载路径（FileAccess 在这里会失效）
 godot --headless --main-pack build\web\index.pck --quit
+
+# 不开编辑器也能看到画面：Godot 自带的 movie writer 会写出 PNG 序列
+godot --path . --write-movie "$env:TEMP\shot\f.png" --fixed-fps 30 --quit-after 3
 ```
 
 ## 技术
