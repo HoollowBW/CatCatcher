@@ -236,7 +236,7 @@ func _draw() -> void:
 
 	var controlled := MoveRules.controlled_cells(state)
 	_draw_control(controlled)
-	_draw_selected_reach()
+	_draw_focus_reach()
 	_draw_dog_warning(controlled)
 	_draw_preview()
 	_draw_selection()
@@ -259,15 +259,26 @@ func _draw_control(controlled: Dictionary) -> void:
 		draw_rect(_cell_rect(cell), _color("control"))
 
 
-## 选中的猫自己的控制范围再压一层，方便看清"这只猫管到哪"
-func _draw_selected_reach() -> void:
-	if _selected < 0:
+## 当前"在看"的那只猫的控制范围再压一层，方便看清"这只猫管到哪"。
+## 鼠标悬停在猫身上就能看，不用先点下去（点了就锁定成那只）。
+func _draw_focus_reach() -> void:
+	var index := _focus_cat_index()
+	if index < 0:
 		return
-	for cell in MoveRules.reach_cells(controller.state, _selected):
+	for cell in MoveRules.reach_cells(controller.state, index):
 		draw_rect(_cell_rect(cell), _color("control").lightened(0.15))
 	# 可落的格画个内框，和"只是被控制"区分开
-	for cell in MoveRules.legal_moves(controller.state, _selected):
+	for cell in MoveRules.legal_moves(controller.state, index):
 		draw_rect(_cell_rect(cell).grow(-6), _color("selected"), false, 2.0)
+
+
+## 「正在关注哪只猫」：选中了就是它；没选中时鼠标停在哪只猫身上就是它。
+func _focus_cat_index() -> int:
+	if _selected >= 0:
+		return _selected
+	if _hover.x < 0 or controller == null or controller.state == null:
+		return -1
+	return controller.state.cat_at(_hover)
 
 
 ## 单位不在这里画 —— 它们是关卡场景里拖好的节点，由 _sync_units() 挪位置。
@@ -320,7 +331,16 @@ func _draw_preview() -> void:
 	var from := _cell_rect(controller.state.dog["pos"]).get_center()
 	var to := _cell_rect(target).get_center()
 
-	# ③ 威胁范围：把这一步真的走一遍，看狗**再下一步**能碰到哪些格
+	# ① 先画"走到这一格之后，这只猫会控住哪些格"—— 这是玩家最想知道的那件事
+	var after_move := controller.state.clone()
+	after_move.cats[cat_index]["pos"] = _hover
+	var hyp_fill := _color("control").lightened(0.28)
+	var hyp_edge := Color(0.60, 0.86, 0.44, 0.9)
+	for cell in MoveRules.reach_cells(after_move, cat_index):
+		draw_rect(_cell_rect(cell), hyp_fill)
+		draw_rect(_cell_rect(cell).grow(-3), hyp_edge, false, 1.5)
+
+	# ② 威胁范围：把这一步真的走一遍，看狗**再下一步**能碰到哪些格
 	var sim := controller.state.clone()
 	var outcome := String(Rules.apply_turn(sim, config, cat_index, _hover)["outcome"])
 	if outcome != Rules.WON:
@@ -330,7 +350,7 @@ func _draw_preview() -> void:
 			draw_rect(_cell_rect(threat_cell), threat_fill)
 			draw_rect(_cell_rect(threat_cell).grow(-2), warn, false, 2.0)
 
-	# ② 箭头和落点画在威胁范围之上
+	# ③ 箭头和落点画在最上面
 	draw_line(from, to, warn, 3.0)
 	draw_arc(to, cell_size * 0.32, 0.0, TAU, 24, warn, 3.0)
 
