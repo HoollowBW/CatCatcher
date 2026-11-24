@@ -114,6 +114,5 @@ func to_state(config: Dictionary) -> GameState:
 		s.cats.append({
 			"type": spawn["type"],
 			"pos": spawn["pos"],
-			"home": spawn["pos"],   # 出生点 = 撞飞/扫回的目的地
 		})
 	return s
