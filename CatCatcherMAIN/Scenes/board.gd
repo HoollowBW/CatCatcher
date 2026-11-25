@@ -962,9 +962,12 @@ func _apply_move(cat_index: int, to: Vector2i) -> void:
 		_punch_meat()
 		_shake(0.3, 8.0)
 	# 有猫被吃掉 => 螺旋起飞残影
+	# ⚠️ 必须跳过玩家刚走的那只猫 —— 它的位置也变了，但那是自己走的，不是被吃
 	for i in controller.state.cats.size():
 		if i >= before_cells.size():
 			break
+		if i == cat_index:
+			continue
 		if controller.state.cats[i]["pos"] != before_cells[i]:
 			_spawn_takeoff(_cat_nodes[i] if i < _cat_nodes.size() else null, before_cells[i])
 			_shake(0.2, 5.0)
