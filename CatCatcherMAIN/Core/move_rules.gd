@@ -6,8 +6,8 @@ extends RefCounted
 ##
 ## ⚠️ 控制范围**不受其他单位阻挡**（纯几何，只有障碍 / 出界能挡）。
 ## ⚠️ **肉格不算控制格**，但也不阻挡车 / 象的视线 —— 肉不是单位，是地物。
-## ⚠️ **站在肉格上的猫，控制范围 = 0**：站肉 = 拿一只猫换一次拖延，
-##    那只猫自己也被钉住（走法=控制，它没有走法），直到被狗吃掉弹回投放点。
+## ⚠️ **站在肉格上的猫，控制范围 = 0**，但它**可以走下来**（玩家能把守肉的猫撤回）。
+##    这是"走法=控制"的唯一例外，规则定稿。
 
 const ORTHO_DIRS := [
 	Vector2i(0, -1), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(1, 0),
@@ -54,8 +54,9 @@ static func _geometry(state: GameState, cat_index: int, with_meat: bool) -> Arra
 	var cat: Dictionary = state.cats[cat_index]
 	var origin: Vector2i = cat["pos"]
 
-	# 站在肉格上的猫：控制为 0，也没有走法
-	if origin == state.meat_pos:
+	# 站在肉格上的猫：**控制范围为 0**（reach_cells 返回空），但它自己**能走下来**
+	# （玩家可以把守肉的猫撤回；这是"控制=走法"的唯一例外，规则里明写）。
+	if origin == state.meat_pos and not with_meat:
 		return []
 
 	match String(cat["type"]):

@@ -111,13 +111,14 @@ func _test_meat_cell() -> void:
 	_ok(not MoveRules.reach_cells(through, 0).has(Vector2i(2, 0)), "肉格不进控制范围")
 	_ok(MoveRules.reach_cells(through, 0).has(Vector2i(3, 0)), "车能看穿肉格控制后面的格")
 
-	# 3) 站在肉格上的猫：控制为 0，也没有走法
+	# 3) 站在肉格上的猫：控制为 0，但**可以撤下来**（规则里明写的例外）
 	var on_meat := _mk(Vector2i(5, 5), [
 		{ "type": "rook", "pos": Vector2i(2, 0) },
 		{ "type": "pawn", "pos": Vector2i(0, 4) },
 	], { "meat": Vector2i(2, 0) })
 	_eq(MoveRules.reach_cells(on_meat, 0).size(), 0, "站肉格的车控制为 0")
-	_eq(MoveRules.legal_moves(on_meat, 0).size(), 0, "站肉格的猫走不了（走法=控制）")
+	_ok(MoveRules.legal_moves(on_meat, 0).has(Vector2i(2, 1)), "站肉格的猫可以撤下来")
+	_eq(MoveRules.legal_moves(on_meat, 0).size(), 10, "站肉格的车按自己的走法撤离（10 格）")
 
 	# 4) 肉格已经有猫时，别的猫不能再踩上去
 	var taken := _mk(Vector2i(5, 5), [

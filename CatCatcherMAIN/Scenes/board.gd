@@ -63,8 +63,6 @@ var _idle: float = 0.0            # 距上次操作的秒数
 var _hint_time: float = 0.0       # 引导箭头的浮动动画计时
 
 ## ---- 演出（M4 里不需要美术的那部分）----
-const DISSOLVE_SHADER := preload("res://CatCatcherMAIN/Scenes/dissolve.gdshader")
-
 var _fx_layer: CanvasLayer = null
 var _flash: ColorRect = null
 var _banner_wrap: Control = null
@@ -191,6 +189,14 @@ func _sync_units() -> void:
 	if _meat_node != null:
 		_meat_node.position = _cell_center(state.meat_pos)
 
+	# 图层顺序：猫和狗压在肉的上面 —— 守肉的那只猫必须看得见（不然它就像消失了）
+	if _meat_node != null:
+		_meat_node.z_index = 0
+	for node in _cat_nodes:
+		node.z_index = 2
+	if _dog_node != null:
+		_dog_node.z_index = 3
+
 
 func _cell_center(cell: Vector2i) -> Vector2:
 	return Vector2(board_origin) + Vector2(cell) * cell_size + Vector2(cell_size, cell_size) * 0.5
@@ -249,6 +255,16 @@ func _process(delta: float) -> void:
 			queue_redraw()
 
 	_update_fx(delta)
+	_update_meat_rot()
+
+
+## 肉随时间变质：越接近回合上限越暗、越往烂掉的黄绿走（纯 modulate，不用新美术）
+func _update_meat_rot() -> void:
+	if _meat_node == null or level == null or controller == null or controller.state == null:
+		return
+	var budget := maxi(level.max_turns, 1)
+	var frac := clampf(float(controller.state.turn) / float(budget), 0.0, 1.0)
+	_meat_node.modulate = Color(1, 1, 1).lerp(Color(0.52, 0.60, 0.34), frac)
 
 
 func _reset_idle() -> void:
@@ -672,9 +688,9 @@ func _clear_fx() -> void:
 		_banner_wrap.scale = Vector2.ONE
 
 
-## 猫被撞飞：在它**原来的格子**留一个残影，用 dissolve shader 烧掉。
-## 残影只是视觉，不参与任何规则运算。
-func _spawn_dissolve_ghost(source: Node2D, cell: Vector2i) -> void:
+## 猫被撞飞（被狗吃掉）：**螺旋起飞** —— 往上飞、绕两圈、缩小淡出。
+## 用的是猫自己那张贴图的副本，所以换美术不用改这里；残影只是视觉，不参与任何规则运算。
+func _spawn_takeoff(source: Node2D, cell: Vector2i) -> void:
 	if source == null or not (source is Sprite2D):
 		return
 	var sprite := source as Sprite2D
@@ -685,19 +701,28 @@ func _spawn_dissolve_ghost(source: Node2D, cell: Vector2i) -> void:
 	ghost.texture = sprite.texture
 	ghost.scale = sprite.scale
 	ghost.modulate = sprite.modulate
+	ghost.z_index = 40                    # 飞在天上，压在其它单位上面
 	ghost.position = _cell_center(cell)
-	ghost.z_index = 5
 
-	var mat := ShaderMaterial.new()
-	mat.shader = DISSOLVE_SHADER
-	ghost.material = mat
-	_level_root.add_child(ghost)
+	var host: Node = _level_root if _level_root != null else self
+	host.add_child(ghost)
 
+	var base := ghost.position
+	var base_scale := sprite.scale
 	var tween := create_tween()
-	tween.tween_method(
-		func(v: float) -> void: mat.set_shader_parameter("progress", v),
-		0.0, 1.0, 0.38)
+	tween.tween_method(_tick_takeoff.bind(ghost, base, base_scale), 0.0, 1.0, 1.15)
 	tween.tween_callback(ghost.queue_free)
+
+
+## 螺旋轨迹：x 绕两圈摆，y 持续上升，同时旋转 + 缩小 + 后半程淡出。
+func _tick_takeoff(p: float, ghost: Sprite2D, base: Vector2, base_scale: Vector2) -> void:
+	if not is_instance_valid(ghost):
+		return
+	var turn := p * TAU * 2.0
+	ghost.position = base + Vector2(cos(turn) * 30.0, -p * 170.0)
+	ghost.rotation = turn
+	ghost.scale = base_scale * (1.0 - 0.7 * p)
+	ghost.modulate.a = 1.0 - clampf((p - 0.45) / 0.55, 0.0, 1.0)
 
 
 # ------------------------------------------------------------ 结算界面 ----
@@ -900,7 +925,7 @@ func _apply_move(cat_index: int, to: Vector2i) -> void:
 		if i >= before_cells.size():
 			break
 		if controller.state.cats[i]["pos"] != before_cells[i]:
-			_spawn_dissolve_ghost(_cat_nodes[i] if i < _cat_nodes.size() else null, before_cells[i])
+			_spawn_takeoff(_cat_nodes[i] if i < _cat_nodes.size() else null, before_cells[i])
 			_shake(0.2, 5.0)
 	# 狗自己挪了窝 => 轻震一下
 	if controller.state.dog["pos"] != before_dog:
