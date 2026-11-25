@@ -953,6 +953,8 @@ func _unhandled_input(event: InputEvent) -> void:
 				_sync_units()
 			KEY_R:
 				_start_level(_level_index)      # 重开本关（不是从头玩）
+			KEY_F1:
+				_debug_dump_dog()               # debug 版：打印狗为什么跑/不跑
 			KEY_ESCAPE:
 				_selected = -1
 		queue_redraw()
@@ -1026,6 +1028,27 @@ func _apply_move(cat_index: int, to: Vector2i) -> void:
 	_update_hint()
 	_sync_units()
 	queue_redraw()
+
+
+## 调试用（F1，只在 debug 构建里生效）：把"狗为什么跑 / 为什么跑不掉"逐条打出来。
+## 逃跑三条件任何一条不满足，狗就不会动 —— 而不是随机。
+func _debug_dump_dog() -> void:
+	if not OS.is_debug_build():
+		return
+	var st := controller.state
+	if st == null:
+		return
+	var dog: Vector2i = st.dog["pos"]
+	print("---- 狗 @ 格%s | 低吼中=%s ----" % [str(dog), str(st.growling)])
+	print("① 脚下那格被控制: %s" % str(MoveRules.controlled_cells(st).has(dog)))
+	print("② 可走格 %d 个: %s" % [Encircle.movable_cells(st).size(), str(Encircle.movable_cells(st))])
+	var flicks := Encircle.flickable_cats(st)
+	print("③ 能吃掉的猫 %d 只: %s" % [flicks.size(), str(flicks)])
+	for f in flicks:
+		var idx: int = f["cat"]
+		print("   - 格%s 上的猫 #%d 没被保护（走到那儿=吃子）" % [str(f["cell"]), idx])
+	print("=> can_flee=%s | 这回合它会做: %s" % [str(Encircle.can_flee(st)), str(DogAI.plan(st))])
+	print("   （③ 非空时不跑：吃子优先于逃跑）")
 
 
 func _on_game_over(is_win: bool, _reason: String) -> void:
