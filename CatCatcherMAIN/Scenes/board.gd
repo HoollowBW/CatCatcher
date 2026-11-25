@@ -366,11 +366,22 @@ func _draw_dog_warning(controlled: Dictionary) -> void:
 
 	if controlled.has(dog_cell):
 		draw_rect(_cell_rect(dog_cell), Color(String(dog_cfg.get("warning_outline", "#e03e3e"))), false, width)
-		# 罩住狗站的格 => 它下回合会自己跑掉（这是玩家"驱赶"狗的唯一手段）
+
 		if not controller.finished:
-			_text_centered("FLEE", _cell_rect(dog_cell).get_center().x,
-				_cell_rect(dog_cell).position.y - 8.0, FONT_SMALL,
-				Color(String(dog_cfg.get("warning_outline", "#e03e3e"))))
+			if Encircle.can_flee(state):
+				# 会被赶走：它下回合自己跑
+				_text_centered("FLEE", _cell_rect(dog_cell).get_center().x,
+					_cell_rect(dog_cell).position.y - 8.0, FONT_SMALL,
+					Color(String(dog_cfg.get("warning_outline", "#e03e3e"))))
+			else:
+				# 罩住了但赶不动：旁边有吃得掉的猫，它会先咬那只
+				_text_centered("WILL BITE", _cell_rect(dog_cell).get_center().x,
+					_cell_rect(dog_cell).position.y - 8.0, FONT_SMALL, _color("selected"))
+				var bite := Color("#e07a3e")
+				for f in Encircle.flickable_cats(state):
+					var r := _cell_rect(f["cell"]).grow(-4)
+					draw_rect(r, bite, false, 2.5)
+					_text_centered("!", r.get_center().x, r.position.y + 12.0, FONT_SMALL, bite)
 
 	var d: Vector2i = dog_cell - state.meat_pos
 	if absi(d.x) + absi(d.y) == 1:
@@ -593,6 +604,10 @@ func _draw_hud() -> void:
 		elif Encircle.can_flee(state):
 			_text("covering the dog makes it run - herd it into a corner",
 				bar_pos + Vector2(0, 46), FONT_SMALL, _color("selected"))
+		elif MoveRules.controlled_cells(state).has(state.dog["pos"]):
+			# 常见误解：罩住了不等于赶得走 —— 它旁边有能吃的猫就先咬人
+			_text("it would bite an unprotected cat first",
+				bar_pos + Vector2(0, 46), FONT_SMALL, Color("#e07a3e"))
 
 	_text("Z undo     R restart", bar_pos + Vector2(0, 84), FONT_SMALL, Color(0.62, 0.58, 0.5))
 
