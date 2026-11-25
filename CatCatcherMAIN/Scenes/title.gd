@@ -31,6 +31,9 @@ const CAT_TYPES := ["rook", "rook"]
 const TITLE_LINES := ["CAT", "CATCHER"]
 const FONT_TITLE := 34
 
+## 点一下开始的那声"嗒"（占位素材借自隔壁 hollow-bastion）
+const SFX_CLICK := preload("res://CatCatcherMAIN/Audio/sfx_click.mp3")
+
 var config: Dictionary = {}
 var cell_size: int = 64
 var board_origin := Vector2i.ZERO
@@ -52,6 +55,7 @@ var _pop_end: float = 0.0
 var _hold_end: float = 0.0
 var _total: float = 1.0
 var _started: bool = false
+var _click_player: AudioStreamPlayer = null
 
 
 func _ready() -> void:
@@ -76,6 +80,11 @@ func _ready() -> void:
 		n.visible = false
 	_meat_node.position = _cell_center(MEAT_CELL)
 
+	_click_player = AudioStreamPlayer.new()
+	_click_player.stream = SFX_CLICK
+	_click_player.volume_db = -5.0
+	add_child(_click_player)
+
 	_walk_end = float((DOG_CELLS.size() - 1) * STEP_TIME)
 	_pop_end = _walk_end + float(CAT_CELLS.size() * POP_TIME)
 	_hold_end = _pop_end + HOLD_TIME
@@ -95,7 +104,11 @@ func _input(event: InputEvent) -> void:
 	if not go:
 		return
 	_started = true
-	get_tree().change_scene_to_file(BOARD_SCENE)
+	# 先出个点击声：这一下点击同时是手机浏览器解锁音频的手势，得在切场景前播
+	_click_player.play()
+	# 等一小会儿再切，否则标题页被 freed 会把声音掐掉
+	get_tree().create_timer(0.15).timeout.connect(
+		func() -> void: get_tree().change_scene_to_file(BOARD_SCENE))
 
 
 func _process(delta: float) -> void:

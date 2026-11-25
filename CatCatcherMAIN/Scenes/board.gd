@@ -21,6 +21,17 @@ const REASON_TEXT := {
 	"timeout": "you ran out of turns",
 }
 
+## 音效：占位素材借自隔壁 hollow-bastion（Audio/Sound_effect），改名成 ASCII 便于 web 导出。
+## 需要换音效时只改这里 + 替换文件，代码不用动。
+const SFX := {
+	"click": preload("res://CatCatcherMAIN/Audio/sfx_click.mp3"),
+	"move": preload("res://CatCatcherMAIN/Audio/sfx_move.mp3"),
+	"flick": preload("res://CatCatcherMAIN/Audio/sfx_flick.mp3"),
+	"growl": preload("res://CatCatcherMAIN/Audio/sfx_growl.mp3"),
+	"win": preload("res://CatCatcherMAIN/Audio/sfx_win.mp3"),
+	"lose": preload("res://CatCatcherMAIN/Audio/sfx_lose.mp3"),
+}
+
 var config: Dictionary
 var level: Level
 var controller: GameController
@@ -45,6 +56,10 @@ var _result_prompt: Label = null
 var _ui_layer: CanvasLayer = null
 var _undo_btn: Button = null
 var _restart_btn: Button = null
+
+## ---- 音效播放器（3 个轮着用，避免互相打断）----
+var _sfx_players: Array = []
+var _sfx_next: int = 0
 
 ## 选中的猫下标，-1 = 没选中
 var _selected: int = -1
@@ -95,6 +110,7 @@ func _ready() -> void:
 	_build_fx_layer()
 	_build_result_layer()
 	_build_ui_layer()
+	_build_audio()
 	print("[CatCatcher] 点猫选中 / 点高亮格移动（狗立刻行动）/ 悬停看威胁范围 | 右上角按钮或 Z 悔棋、R 重开 | 通关后任意键或点屏幕进下一关")
 
 	# 启动校验：每关都必须有解（求解器真搜，不是读标准答案糊弄）
@@ -758,6 +774,7 @@ func _build_ui_layer() -> void:
 
 	_undo_btn = _make_hud_button("UNDO", 1)
 	_undo_btn.pressed.connect(func() -> void:
+		_sfx("click")
 		controller.undo()
 		_selected = -1
 		_bump_version()
@@ -767,7 +784,9 @@ func _build_ui_layer() -> void:
 		queue_redraw())
 
 	_restart_btn = _make_hud_button("RESTART", 0)
-	_restart_btn.pressed.connect(func() -> void: _start_level(_level_index))
+	_restart_btn.pressed.connect(func() -> void:
+		_sfx("click")
+		_start_level(_level_index))
 
 	_refresh_buttons()
 
@@ -791,6 +810,26 @@ func _make_hud_button(text: String, slot: int) -> Button:
 func _refresh_buttons() -> void:
 	if _undo_btn != null:
 		_undo_btn.disabled = controller == null or not controller.can_undo()
+
+
+# ---------------------------------------------------------------- 音效 ----
+
+func _build_audio() -> void:
+	for i in 3:
+		var p := AudioStreamPlayer.new()
+		p.volume_db = -5.0
+		add_child(p)
+		_sfx_players.append(p)
+
+
+## 播一个音效。手机浏览器要等玩家第一次点击才解锁音频，标题页那一下点击就是手势。
+func _sfx(key: String) -> void:
+	if _sfx_players.is_empty() or not SFX.has(key):
+		return
+	var p: AudioStreamPlayer = _sfx_players[_sfx_next]
+	_sfx_next = (_sfx_next + 1) % _sfx_players.size()
+	p.stream = SFX[key]
+	p.play()
 
 
 ## 一条占满整个视口宽度的横带，文字居中。
@@ -916,20 +955,29 @@ func _apply_move(cat_index: int, to: Vector2i) -> void:
 
 	controller.move_cat(cat_index, to)
 
+	var eaten := false
+
 	# 狗吃到肉 => 红光 + 震屏（结算演出接着上）
 	if controller.result_reason == "meat_eaten":
 		_punch_meat()
 		_shake(0.3, 8.0)
-	# 有猫被吃掉 => 原格烧个残影（和以前撞飞同一套表现）
+	# 有猫被吃掉 => 螺旋起飞残影
 	for i in controller.state.cats.size():
 		if i >= before_cells.size():
 			break
 		if controller.state.cats[i]["pos"] != before_cells[i]:
 			_spawn_takeoff(_cat_nodes[i] if i < _cat_nodes.size() else null, before_cells[i])
 			_shake(0.2, 5.0)
+			eaten = true
 	# 狗自己挪了窝 => 轻震一下
 	if controller.state.dog["pos"] != before_dog:
 		_shake(0.15, 3.0)
+
+	# 一次行动只播一个音效：吃子 > 低吼 > 挪动（吃肉的音效交给结算页的 lose）
+	if eaten:
+		_sfx("flick")
+	elif controller.result_reason != "meat_eaten":
+		_sfx("growl" if controller.state.growling else "move")
 
 	_selected = -1
 	_bump_version()
@@ -942,6 +990,7 @@ func _on_game_over(is_win: bool, _reason: String) -> void:
 	_selected = -1
 	if not is_win:
 		_fail_count += 1
+	_sfx("win" if is_win else "lose")
 	_start_finish_fx(is_win)      # 先播演出，演完 _end_finish_fx 才弹结算
 	queue_redraw()
 
