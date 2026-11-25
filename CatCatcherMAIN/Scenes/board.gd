@@ -41,6 +41,11 @@ var _result_title: Label = null
 var _result_reason: Label = null
 var _result_prompt: Label = null
 
+## ---- 屏幕按钮（手机用）----
+var _ui_layer: CanvasLayer = null
+var _undo_btn: Button = null
+var _restart_btn: Button = null
+
 ## 选中的猫下标，-1 = 没选中
 var _selected: int = -1
 ## 鼠标下的格子，(-1,-1) = 不在棋盘上
@@ -91,7 +96,8 @@ func _ready() -> void:
 	RenderingServer.set_default_clear_color(_color("bg"))
 	_build_fx_layer()
 	_build_result_layer()
-	print("[CatCatcher] 左键点猫选中 / 悬停格子看威胁范围 | 点高亮格移动 | Z 悔棋 | R 重开 | 通关后 SPACE 下一关")
+	_build_ui_layer()
+	print("[CatCatcher] 点猫选中 / 点高亮格移动（狗立刻行动）/ 悬停看威胁范围 | 右上角按钮或 Z 悔棋、R 重开 | 通关后任意键或点屏幕进下一关")
 
 	# 启动校验：每关都必须有解（求解器真搜，不是读标准答案糊弄）
 	var problems := Levels.validate_all(config)
@@ -164,6 +170,7 @@ func _has_next_level() -> bool:
 
 func _on_state_changed() -> void:
 	_sync_units()
+	_refresh_buttons()
 	queue_redraw()
 
 
@@ -213,11 +220,6 @@ func _hint_due() -> bool:
 ## 提示 = 求解器从**当前局面**算出的第一步。
 ## 用当前局面而不是关卡里写死的序列 —— 玩家走偏了也还能拿到正确提示。
 func _update_hint() -> void:
-	# 本回合已经走过一步（等玩家按 END TURN）=> 这时候给"下一步"提示只会误导
-	if controller.has_moved():
-		_hint_step = {}
-		_hint_version = -1
-		return
 	if not _hint_due():
 		_hint_step = {}
 		_hint_version = -1
@@ -527,13 +529,10 @@ func _draw_hud() -> void:
 	_text("LEVEL %d / %d" % [_level_index + 1, Levels.count()],
 		bar_pos + Vector2(bar_w - 96, 0), FONT_MID, Color(0.9, 0.87, 0.8))
 
-	# 回合流程：走完一步只是"试探"，按 END TURN 提交后狗才会行动
+	# 回合流程：点猫 -> 点高亮格 => 走完狗立刻行动
 	if not controller.finished:
-		if controller.has_moved():
-			_text("END TURN = SPACE      UNDO = Z", bar_pos + Vector2(0, 26), FONT_MID, _color("selected"))
-		else:
-			_text("pick a cat, then a highlighted cell",
-				bar_pos + Vector2(0, 26), FONT_SMALL, Color(0.78, 0.74, 0.66))
+		_text("tap a cat, then a highlighted cell",
+			bar_pos + Vector2(0, 26), FONT_SMALL, Color(0.78, 0.74, 0.66))
 		# 狗已经低吼过 => 下一回合就吃肉了，这是最后的警告
 		if state.growling:
 			_text("THE DOG IS GROWLING - COVER THE MEAT!",
@@ -542,7 +541,7 @@ func _draw_hud() -> void:
 			_text("covering the dog makes it run - herd it into a corner",
 				bar_pos + Vector2(0, 46), FONT_SMALL, _color("selected"))
 
-	_text("LMB pick / move     Z undo     R restart", bar_pos + Vector2(0, 84), FONT_SMALL, Color(0.62, 0.58, 0.5))
+	_text("Z undo     R restart", bar_pos + Vector2(0, 84), FONT_SMALL, Color(0.62, 0.58, 0.5))
 
 	# 提示文字放棋盘右侧空白处，别挤 HUD 下面那点地方
 	if not _hint_step.is_empty() and not controller.finished:
@@ -725,6 +724,50 @@ func _build_result_layer() -> void:
 	_result_prompt = _make_result_label(300, 24, FONT_SMALL, Color(0.62, 0.58, 0.5))
 
 
+## 屏幕按钮：**手机上没键盘**，悔棋/重开必须点到。
+## 贴右上角（锚点跟着视口走），focus_mode=NONE 免得键盘焦点被按钮吃掉。
+func _build_ui_layer() -> void:
+	_ui_layer = CanvasLayer.new()
+	_ui_layer.layer = 6
+	add_child(_ui_layer)
+
+	_undo_btn = _make_hud_button("UNDO", 1)
+	_undo_btn.pressed.connect(func() -> void:
+		controller.undo()
+		_selected = -1
+		_bump_version()
+		_update_hint()
+		_hide_result()
+		_sync_units()
+		queue_redraw())
+
+	_restart_btn = _make_hud_button("RESTART", 0)
+	_restart_btn.pressed.connect(func() -> void: _start_level(_level_index))
+
+	_refresh_buttons()
+
+
+## slot 0 = 最靠右，slot 1 = 它左边一个
+func _make_hud_button(text: String, slot: int) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.anchor_left = 1.0
+	b.anchor_right = 1.0
+	b.offset_left = -136.0 - 140.0 * slot
+	b.offset_right = -16.0 - 140.0 * slot
+	b.offset_top = 10.0
+	b.offset_bottom = 44.0
+	b.focus_mode = Control.FOCUS_NONE
+	b.add_theme_font_size_override("font_size", 15)
+	_ui_layer.add_child(b)
+	return b
+
+
+func _refresh_buttons() -> void:
+	if _undo_btn != null:
+		_undo_btn.disabled = controller == null or not controller.can_undo()
+
+
 ## 一条占满整个视口宽度的横带，文字居中。
 func _make_result_label(top: int, height: int, size: int, tint: Color) -> Label:
 	var l := Label.new()
@@ -754,9 +797,9 @@ func _show_result() -> void:
 	var prompt := "press R to restart"
 	if controller.won:
 		if _has_next_level():
-			prompt = "press SPACE for the next level"
+			prompt = "tap or press any key for the next level"
 		else:
-			prompt = "all levels cleared - press R to replay"
+			prompt = "all levels cleared - tap to replay"
 	_result_prompt.text = prompt
 	_result_layer.visible = true
 
@@ -764,6 +807,17 @@ func _show_result() -> void:
 func _hide_result() -> void:
 	if _result_layer != null:
 		_result_layer.visible = false
+
+
+## 结算页之后：赢了进下一关（最后一关则从头再来），输了重开本关。
+## 手机上就是"点一下屏幕"，键盘上就是"任意键"。
+func _advance_after_result() -> void:
+	if not controller.finished:
+		return
+	if controller.won:
+		_start_level(_level_index + 1 if _has_next_level() else 0)
+	else:
+		_start_level(_level_index)
 
 
 # ---------------------------------------------------------------- 输入 ----
@@ -774,6 +828,16 @@ func _unhandled_input(event: InputEvent) -> void:
 		if hovered != _hover:
 			_hover = hovered
 			queue_redraw()
+		return
+
+	# 结算页：任意键 / 点屏幕都继续（手机上没有键盘）
+	if controller.finished:
+		if event is InputEventKey and event.pressed and not event.echo:
+			_advance_after_result()
+		elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+			_advance_after_result()
+		elif event is InputEventScreenTouch and event.pressed:
+			_advance_after_result()
 		return
 
 	if event is InputEventKey and event.pressed and not event.echo:
@@ -788,48 +852,44 @@ func _unhandled_input(event: InputEvent) -> void:
 				_sync_units()
 			KEY_R:
 				_start_level(_level_index)      # 重开本关（不是从头玩）
-			KEY_SPACE, KEY_ENTER:
-				if controller.finished and controller.won and _has_next_level():
-					_start_level(_level_index + 1)
-				elif controller.has_moved():
-					_commit_turn()              # 提交回合 => 狗行动
 			KEY_ESCAPE:
 				_selected = -1
 		queue_redraw()
 		return
 
+	# 触摸：手机上没有鼠标，用 ScreenTouch 走同一套逻辑
+	if event is InputEventScreenTouch and event.pressed:
+		_handle_tap(_point_to_cell(event.position))
+		return
+
 	if not (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT):
 		return
+	_handle_tap(_point_to_cell(get_global_mouse_position()))
 
-	_reset_idle()
-	var cell := _point_to_cell(get_global_mouse_position())
+
+## 棋盘上的一次点击/触摸：点高亮格 = 走（狗立刻行动）；点猫 = 选中；点别处 = 取消
+func _handle_tap(cell: Vector2i) -> void:
 	if cell.x < 0:
 		return
+	_reset_idle()
 
-	# 已经选了猫，且点的是合法落点 => 试探性走这一步，**狗还不动**
-	if _selected >= 0 and not controller.finished:
-		if MoveRules.legal_moves(controller.state, _selected).has(cell):
-			controller.move_cat(_selected, cell)
-			_selected = -1
-			_bump_version()
-			_update_hint()
-			queue_redraw()
-			return
+	if _selected >= 0 and MoveRules.legal_moves(controller.state, _selected).has(cell):
+		_apply_move(_selected, cell)
+		return
 
-	# 否则：点猫 = 选中，点别处 = 取消选中
-	_selected = -1 if controller.finished else controller.state.cat_at(cell)
+	_selected = controller.state.cat_at(cell)
 	queue_redraw()
 
 
-## 提交回合：狗行动 + 顺带播反馈。
+## 走一步：走完狗立刻行动，顺便播反馈。
 ## 全靠"动手前后对比 state"判断发生了什么，不需要 Core 额外回报。
-func _commit_turn() -> void:
+func _apply_move(cat_index: int, to: Vector2i) -> void:
 	var before_dog: Vector2i = controller.state.dog["pos"]
 	var before_cells: Array = []
 	for c in controller.state.cats:
 		before_cells.append(c["pos"])
 
-	controller.end_turn()
+	controller.move_cat(cat_index, to)
 
 	# 狗吃到肉 => 红光 + 震屏（结算演出接着上）
 	if controller.result_reason == "meat_eaten":

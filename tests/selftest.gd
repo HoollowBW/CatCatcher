@@ -257,11 +257,10 @@ func _test_flee() -> void:
 	_ok(not Encircle.can_flee(free), "没控制住狗所在格时它不会跑")
 	_eq(String(DogAI.plan(free)["kind"]), "move", "没被罩住的狗照常朝肉走")
 
-	# 整局流程：走一步猫 => 提交 => 狗自己跑掉（玩家不点狗）
+	# 整局流程：走一步猫 => 狗立刻行动（如果是被罩住，它自己跑掉，玩家不点狗）
 	var gc := _controller_for(s)
 	var before: Vector2i = gc.state.dog["pos"]
 	_ok(gc.move_cat(0, Vector2i(2, 1)), "玩家把车挪到狗那一列")
-	_ok(gc.end_turn(), "提交回合")
 	_ok(gc.state.dog["pos"] != before, "狗自己跑掉了，不需要点它")
 	_eq(gc.state.turn, 1, "推进一回合")
 
@@ -329,36 +328,30 @@ func _test_controller() -> void:
 	], { "meat": Vector2i(0, 0) }))
 
 	_eq(gc.state.turn, 0, "开局回合 0")
-	# 非法走法不改状态（车在 (4,4)，(0,0) 不在它的行列上；肉也在 (0,0) 之外）
-	if not gc.move_cat(0, Vector2i(0, 0)):
+	# 非法走法不改状态（车在 (4,4)，(0,5) 不在它的行列上）
+	if not gc.move_cat(0, Vector2i(0, 5)):
 		_pass += 1
 	else:
 		_fail += 1
 		printerr("  FAIL: 非法走法应返回 false")
+	_eq(gc.state.turn, 0, "非法走法不推进回合")
 
-	# 试探性移动：狗不动、回合不推进
+	# 合法走法：走完**立刻**轮狗行动（没有"先摆再提交"了）
 	_ok(gc.move_cat(0, Vector2i(4, 3)), "合法走法返回 true")
-	_eq(gc.state.turn, 0, "提交前不推进回合")
-	_eq(gc.state.dog["pos"], Vector2i(2, 2), "提交前狗不动")
-	_ok(gc.has_moved(), "本回合已走过一步")
+	_eq(gc.state.turn, 1, "走一步就推进到回合 1")
+	_eq(gc.state.dog["pos"], Vector2i(2, 1), "狗立刻朝肉走了一格")
 
-	# 一回合只能走一只猫一次
-	if not gc.move_cat(0, Vector2i(4, 2)):
+	# 悔棋 = 回到上一步（玩家那一步 + 狗那一步一起撤）
+	_ok(gc.can_undo(), "有可悔的回合")
+	_ok(gc.undo(), "悔棋成功")
+	_eq(gc.state.turn, 0, "悔棋回到回合 0")
+	_eq(gc.state.cats[0]["pos"], Vector2i(4, 4), "悔棋把车放回原位")
+	_eq(gc.state.dog["pos"], Vector2i(2, 2), "悔棋把狗放回原位")
+	if not gc.can_undo():
 		_pass += 1
 	else:
 		_fail += 1
-		printerr("  FAIL: 一回合内不该能走第二次")
-
-	# 撤销回原位
-	_ok(gc.undo(), "撤销成功")
-	_eq(gc.state.cats[0]["pos"], Vector2i(4, 4), "撤销把车放回去")
-	_ok(not gc.has_moved(), "撤销后可以重走")
-
-	# 结束回合 => 狗行动
-	_ok(gc.move_cat(0, Vector2i(4, 3)), "重新走一步")
-	_ok(gc.end_turn(), "结束回合成功")
-	_eq(gc.state.turn, 1, "结束回合后推进到回合 1")
-	_eq(gc.state.dog["pos"], Vector2i(2, 1), "狗朝肉走了一格")
+		printerr("  FAIL: 悔到底后不该还能悔")
 
 	# 预览：这一步之后狗会做什么
 	var preview := gc.preview_after(0, Vector2i(4, 2))

@@ -18,8 +18,6 @@ var result_reason := ""
 
 ## 每回合开始前的快照，撤销一次 = 退回上一个已提交回合
 var _undo: Array = []
-## 本回合玩家是否已经走过一步
-var _moved := false
 
 
 func setup(lv: Level, cfg: Dictionary) -> void:
@@ -33,7 +31,6 @@ func restart() -> void:
 		return
 	state = level.to_state(config)
 	_undo.clear()
-	_moved = false
 	finished = false
 	won = false
 	result_reason = ""
@@ -42,53 +39,41 @@ func restart() -> void:
 
 # ------------------------------------------------------------ 玩家阶段 ----
 
-## 试探性走一步：**不推进狗**，玩家还能撤销。本回合只能走一次。
+## 玩家把第 cat_index 只猫走到 to。**走完立刻推进狗的行动并结算**（没有"先摆再提交"）。
+## 非法走法返回 false，且不改任何状态。
 func move_cat(cat_index: int, to: Vector2i) -> bool:
-	if finished or state == null or _moved:
+	if finished or state == null:
 		return false
 	if cat_index < 0 or cat_index >= state.cats.size():
 		return false
 	if not MoveRules.legal_moves(state, cat_index).has(to):
 		return false
 
+	# 悔棋快照必须在动手之前拍（一次悔棋 = 撤回这一整个回合）
 	_undo.append(state.snapshot())
-	state.cats[cat_index]["pos"] = to
-	_moved = true
-	state_changed.emit()
-	return true
 
-
-func has_moved() -> bool:
-	return _moved
-
-
-## 撤销这一步（可以连撤，一直退回开局）
-func undo() -> bool:
-	if _undo.is_empty():
-		return false
-	state.restore(_undo.pop_back())
-	_moved = false
-	finished = false
-	won = false
-	result_reason = ""
-	state_changed.emit()
-	return true
-
-
-## 提交本回合：狗行动 + 结算。
-func end_turn() -> bool:
-	if finished or state == null or not _moved:
-		return false
-
-	state.turn += 1
-	var result := Rules.apply_dog_turn(state, config)
-	_moved = false
-
+	var result := Rules.apply_turn(state, config, cat_index, to)
 	var outcome := String(result["outcome"])
 	if outcome == Rules.ONGOING:
 		state_changed.emit()
 	else:
 		_finish(outcome == Rules.WON, String(result["reason"]))
+	return true
+
+
+func can_undo() -> bool:
+	return not _undo.is_empty()
+
+
+## 撤销上一个回合（玩家那一步 + 狗那一步一起撤），可以连撤到开局
+func undo() -> bool:
+	if _undo.is_empty():
+		return false
+	state.restore(_undo.pop_back())
+	finished = false
+	won = false
+	result_reason = ""
+	state_changed.emit()
 	return true
 
 
