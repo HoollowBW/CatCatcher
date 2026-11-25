@@ -43,6 +43,15 @@ var GZIP_BYTES = 10114183;
   var raw = window.fetch;
   window.fetch = function (input, init) {
     var url = typeof input === 'string' ? input : ((input && input.url) || '');
+
+    // GitHub Pages serves everything with Cache-Control: max-age=600, and index.pck IS
+    // the game logic. Without busting it, a pushed update keeps showing the old rules for
+    // up to 10 minutes in the browser (hit twice on mobile). A timestamp forces the edge
+    // node to hand over the current pck; the cost is re-downloading 0.15MB.
+    if (/\/?index\.pck$/.test(url)) {
+      return raw.call(this, url + '?t=' + Date.now(), init);
+    }
+
     return raw.call(this, input, init).then(function (res) {
       if (!/\/?index\.wasm(\?.*)?$/.test(url) || !res.ok || !res.body) return res;
       if (typeof DecompressionStream === 'undefined') {

@@ -106,6 +106,15 @@ var GZIP_BYTES = __GZIP_BYTES__;
   var raw = window.fetch;
   window.fetch = function (input, init) {
     var url = typeof input === 'string' ? input : ((input && input.url) || '');
+
+    // GitHub Pages serves everything with Cache-Control: max-age=600, and index.pck IS
+    // the game logic. Without busting it, a pushed update keeps showing the old rules for
+    // up to 10 minutes in the browser (hit twice on mobile). A timestamp forces the edge
+    // node to hand over the current pck; the cost is re-downloading 0.15MB.
+    if (/\/?index\.pck$/.test(url)) {
+      return raw.call(this, url + '?t=' + Date.now(), init);
+    }
+
     return raw.call(this, input, init).then(function (res) {
       if (!/\/?index\.wasm(\?.*)?$/.test(url) || !res.ok || !res.body) return res;
       if (typeof DecompressionStream === 'undefined') {
@@ -148,7 +157,7 @@ Write-Host '[4/5] patching index.html...' -ForegroundColor Cyan
 $html = [System.IO.File]::ReadAllText((Join-Path $Out 'index.html'))
 # ?v= is a cache buster: GitHub Pages caches for 10 minutes, and a stale shim looks
 # exactly like a frozen game. Bump it whenever the shim changes.
-$tag = '<script src="wasm-gzip.js?v=3"></script>'
+$tag = '<script src="wasm-gzip.js?v=4"></script>'
 if ($html -notmatch [regex]::Escape($tag)) {
   if ($html -notmatch '</head>') {
     Write-Host '[x] index.html has no </head> - cannot install the shim' -ForegroundColor Red
