@@ -90,6 +90,10 @@ var _shake_t: float = 0.0
 var _shake_dur: float = 0.0
 var _shake_amp: float = 0.0
 
+## 撞飞命中环：被吃的那一刻在那格炸一圈，保证"哪一格被吃"看得见（飞到画外也还剩这一下）
+var _hit_cell := Vector2i(-1, -1)
+var _hit_t: float = 0.0
+
 
 func _ready() -> void:
 	config = Level.load_config()
@@ -273,6 +277,11 @@ func _process(delta: float) -> void:
 	_update_fx(delta)
 	_update_meat_rot()
 
+	# 撞飞命中环的生命周期
+	if _hit_t > 0.0:
+		_hit_t = maxf(0.0, _hit_t - delta)
+		queue_redraw()
+
 
 ## 肉随时间变质：越接近回合上限越暗、越往烂掉的黄绿走（纯 modulate，不用新美术）
 func _update_meat_rot() -> void:
@@ -301,6 +310,7 @@ func _draw() -> void:
 	_draw_dog_warning(controlled)
 	_draw_preview()
 	_draw_selection()
+	_draw_hit_burst()
 	_draw_hint()
 	_draw_hud()
 	# 结算界面不在这里画 —— 单位是场景子节点，会盖住 _draw() 的内容。
@@ -333,6 +343,17 @@ func _draw_focus_reach() -> void:
 
 
 ## 单位不在这里画 —— 它们是关卡场景里拖好的节点，由 _sync_units() 挪位置。
+
+
+## 撞飞命中环：从被吃的那格往外炸一圈，越扩越淡（画在最底层，猫飞在上面）
+func _draw_hit_burst() -> void:
+	if _hit_t <= 0.0 or _hit_cell.x < 0:
+		return
+	var k := 1.0 - clampf(_hit_t / 0.45, 0.0, 1.0)        # 0 -> 1
+	var c := _cell_rect(_hit_cell).get_center()
+	var tint := Color(1.0, 0.95, 0.75, 1.0 - k)
+	draw_arc(c, cell_size * (0.20 + 0.55 * k), 0.0, TAU, 32, tint, 4.0 * (1.0 - k) + 1.0)
+	draw_circle(c, cell_size * (0.30 - 0.24 * k), Color(tint.r, tint.g, tint.b, 0.35 * (1.0 - k)))
 
 
 ## 狗站在被控制的格上 => 红色描边（"它已经被罩住了"）
@@ -706,6 +727,7 @@ func _clear_fx() -> void:
 
 ## 猫被撞飞（被狗吃掉）：**螺旋起飞** —— 往上飞、绕两圈、缩小淡出。
 ## 用的是猫自己那张贴图的副本，所以换美术不用改这里；残影只是视觉，不参与任何规则运算。
+## 参数偏"夸张"是故意的：小贴图 + 1 秒的位移在手机上很容易看漏。
 func _spawn_takeoff(source: Node2D, cell: Vector2i) -> void:
 	if source == null or not (source is Sprite2D):
 		return
@@ -715,30 +737,30 @@ func _spawn_takeoff(source: Node2D, cell: Vector2i) -> void:
 
 	var ghost := Sprite2D.new()
 	ghost.texture = sprite.texture
-	ghost.scale = sprite.scale
+	ghost.scale = sprite.scale * 1.35      # 起手放大一下，像被撞飞
 	ghost.modulate = sprite.modulate
-	ghost.z_index = 40                    # 飞在天上，压在其它单位上面
+	ghost.z_index = 40                     # 飞在天上，压在其它单位上面
 	ghost.position = _cell_center(cell)
 
 	var host: Node = _level_root if _level_root != null else self
 	host.add_child(ghost)
 
 	var base := ghost.position
-	var base_scale := sprite.scale
+	var base_scale := sprite.scale * 1.35
 	var tween := create_tween()
-	tween.tween_method(_tick_takeoff.bind(ghost, base, base_scale), 0.0, 1.0, 1.15)
+	tween.tween_method(_tick_takeoff.bind(ghost, base, base_scale), 0.0, 1.0, 1.5)
 	tween.tween_callback(ghost.queue_free)
 
 
-## 螺旋轨迹：x 绕两圈摆，y 持续上升，同时旋转 + 缩小 + 后半程淡出。
+## 螺旋轨迹：x 绕两圈摆（半径 36），y 一路升 200px，边转边缩，后半程淡出。
 func _tick_takeoff(p: float, ghost: Sprite2D, base: Vector2, base_scale: Vector2) -> void:
 	if not is_instance_valid(ghost):
 		return
 	var turn := p * TAU * 2.0
-	ghost.position = base + Vector2(cos(turn) * 30.0, -p * 170.0)
+	ghost.position = base + Vector2(cos(turn) * 36.0, -p * 200.0)
 	ghost.rotation = turn
-	ghost.scale = base_scale * (1.0 - 0.7 * p)
-	ghost.modulate.a = 1.0 - clampf((p - 0.45) / 0.55, 0.0, 1.0)
+	ghost.scale = base_scale * (1.0 - 0.78 * p)
+	ghost.modulate.a = 1.0 - clampf((p - 0.55) / 0.45, 0.0, 1.0)
 
 
 # ------------------------------------------------------------ 结算界面 ----
@@ -970,6 +992,8 @@ func _apply_move(cat_index: int, to: Vector2i) -> void:
 			continue
 		if controller.state.cats[i]["pos"] != before_cells[i]:
 			_spawn_takeoff(_cat_nodes[i] if i < _cat_nodes.size() else null, before_cells[i])
+			_hit_cell = before_cells[i]      # 命中环：飞出去了也还剩这一下
+			_hit_t = 0.45
 			_shake(0.2, 5.0)
 			eaten = true
 	# 狗自己挪了窝 => 轻震一下
