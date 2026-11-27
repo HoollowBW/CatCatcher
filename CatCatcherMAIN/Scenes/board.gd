@@ -75,7 +75,7 @@ var controller: GameController
 var cell_size: int = 64
 var board_origin := Vector2i.ZERO
 var colors: Dictionary = {}
-var _control_alpha: float = 0.0     # 控制格爪印的不透明度（配置 board.control_alpha）
+var _control_alpha: float = 0.3     # 控制格爪印的不透明度（配置 board.control_alpha）
 
 ## ---- 关卡场景与单位节点 ----
 var _level_root: Node2D = null      # 装着实例化进来的关卡场景
