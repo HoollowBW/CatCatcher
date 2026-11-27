@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://bl04x615nqg1i"
-path="res://.godot/imported/cat_pawn.png-0a4c4654a12d76f4ab028e7d103ea6cc.ctex"
+uid="uid://cjxycw8s74l1s"
+path="res://.godot/imported/art_cat_rook.png-9b5b50a15824e84a5c0996772df17ca2.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://CatCatcherMAIN/Graphics/placeholders/cat_pawn.png"
-dest_files=["res://.godot/imported/cat_pawn.png-0a4c4654a12d76f4ab028e7d103ea6cc.ctex"]
+source_file="res://CatCatcherMAIN/Graphics/Cats/art_cat_rook.png"
+dest_files=["res://.godot/imported/art_cat_rook.png-9b5b50a15824e84a5c0996772df17ca2.ctex"]
 
 [params]
 

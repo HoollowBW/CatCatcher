@@ -1,0 +1,29 @@
+[gd_scene load_steps=7 format=3]
+
+[ext_resource type="Script" path="res://CatCatcherMAIN/Levels/level.gd" id="1_script"]
+[ext_resource type="PackedScene" path="res://CatCatcherMAIN/Characters/Cats/cat_rook.tscn" id="2_rook"]
+[ext_resource type="PackedScene" path="res://CatCatcherMAIN/Characters/Cats/cat_pawn.tscn" id="4_pawn"]
+[ext_resource type="PackedScene" path="res://CatCatcherMAIN/Characters/Cats/cat_bishop.tscn" id="8_bishop"]
+[ext_resource type="PackedScene" path="res://CatCatcherMAIN/Characters/Dogs/dog_stray.tscn" id="5_dog"]
+[ext_resource type="PackedScene" path="res://CatCatcherMAIN/Characters/Meat/meat.tscn" id="6_meat"]
+
+[node name="Level07" type="Node2D"]
+script = ExtResource("1_script")
+level_id = 7
+level_name = "教学 · 守肉"
+max_turns = 12
+
+[node name="CatRook" parent="." instance=ExtResource("2_rook")]
+position = Vector2(448, 328)
+
+[node name="CatPawn" parent="." instance=ExtResource("4_pawn")]
+position = Vector2(576, 392)
+
+[node name="CatBishop" parent="." instance=ExtResource("8_bishop")]
+position = Vector2(448, 200)
+
+[node name="Dog" parent="." instance=ExtResource("5_dog")]
+position = Vector2(576, 328)
+
+[node name="Meat" parent="." instance=ExtResource("6_meat")]
+position = Vector2(640, 392)

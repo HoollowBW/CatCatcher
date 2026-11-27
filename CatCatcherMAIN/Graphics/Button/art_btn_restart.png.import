@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://c7txhjykd4op"
-path="res://.godot/imported/dog.png-385ca70c0517e7e863828df92180d74c.ctex"
+uid="uid://1susaao0hcw"
+path="res://.godot/imported/art_btn_restart.png-034b1e37c5dcfa82d174153ae64b94b2.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://CatCatcherMAIN/Graphics/placeholders/dog.png"
-dest_files=["res://.godot/imported/dog.png-385ca70c0517e7e863828df92180d74c.ctex"]
+source_file="res://CatCatcherMAIN/Graphics/Button/art_btn_restart.png"
+dest_files=["res://.godot/imported/art_btn_restart.png-034b1e37c5dcfa82d174153ae64b94b2.ctex"]
 
 [params]
 

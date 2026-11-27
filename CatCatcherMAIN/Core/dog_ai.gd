@@ -7,12 +7,11 @@ extends RefCounted
 ##
 ## 只有一种狗（野狗，贪心朝肉走）。决策优先级：
 ##   ⓪ 脚下被控制 => 逃跑（跑到安全格，见 Encircle.can_flee）
-##   ① 贴着肉格 => 肉格有猫就吃掉它 / 低吼过就吃肉 / 否则低吼（吃肉前摇）
-##   ② 朝肉方向那一格能走 => 走
-##   ③ 朝肉方向那一格是吃得掉的猫 => 吃掉它（吃子 = 移动到那格）
+##   ① 嘴边有**吃得掉的无保护猫** => 先撞它（**高于一切对肉动作**：别让它一口把肉吞了）
+##   ② 贴着肉格 => 肉格有猫就吃掉它 / 低吼过就吃肉 / 否则低吼（吃肉前摇）
+##   ③ 朝肉方向那一格能走 => 走
 ##   ④ 退而求其次：走向离肉最近的可走格（同距离优先逃路多的）
-##   ⑤ 还有吃得掉的猫 => 随便吃一只（有动作就不算围死）
-##   ⑥ 什么都不能做 => 围死，玩家赢
+##   ⑤ 什么都不能做 => 围死，玩家赢
 ##
 ## 返回 { "kind": String, "to": Vector2i, "cat": int }
 ##   "eat"：吃到肉（玩家输，由 Rules 结算）
@@ -29,7 +28,17 @@ static func plan(state: GameState) -> Dictionary:
 	if Encircle.can_flee(state):
 		return { "kind": "flee", "to": Encircle.flee_target(state), "cat": -1 }
 
-	# ① 贴着肉格：一切以肉优先
+	# ① 嘴边有吃得掉的无保护猫 => 撞它。**优先于所有对肉动作**（需求方定）：
+	#    不然会出现"旁边挂着一只没人罩的猫，它却直接低吼/吞肉"这种看不懂的局面。
+	#    垫在肉格上的那只最该被吃（它本来就在嘴边），先挑它 => 垫肉机制不受影响。
+	var flicks := Encircle.flickable_cats(state)
+	if not flicks.is_empty():
+		for f in flicks:
+			if f["cell"] == state.meat_pos:
+				return { "kind": "flick", "to": f["cell"], "cat": f["cat"] }
+		return { "kind": "flick", "to": flicks[0]["cell"], "cat": flicks[0]["cat"] }
+
+	# ② 贴着肉格：低吼 / 吃肉（走到这儿说明嘴边没有能吃的猫）
 	var meat := Encircle.meat_action(state)
 	if not meat.is_empty():
 		return meat
@@ -37,23 +46,13 @@ static func plan(state: GameState) -> Dictionary:
 	var movable: Array = Encircle.movable_cells(state)
 	var preferred := _preferred_step(state)
 
-	if preferred.x >= 0:
-		# ③ 朝肉那格蹲着吃得掉的猫 => 吃掉它（吃子会移动到那格，等于前进一格）
-		var blocker := state.cat_at(preferred)
-		if blocker != -1 and not MoveRules.is_protected(state, blocker):
-			return { "kind": "flick", "to": preferred, "cat": blocker }
-		# ② 那格能走就走进
-		if movable.has(preferred):
-			return { "kind": "move", "to": preferred, "cat": -1 }
+	if preferred.x >= 0 and movable.has(preferred):
+		# ③ 朝肉那格能走就走进
+		return { "kind": "move", "to": preferred, "cat": -1 }
 
 	# ④ 朝肉的路被控制挡住 => 挑离肉最近的可走格
 	if not movable.is_empty():
 		return { "kind": "move", "to": _closest_to_meat(state, movable), "cat": -1 }
-
-	# ⑤ 走不了但吃得掉 => 吃一只（否则会被误判成围死）
-	var flicks := Encircle.flickable_cats(state)
-	if not flicks.is_empty():
-		return { "kind": "flick", "to": flicks[0]["cell"], "cat": flicks[0]["cat"] }
 
 	return _none()
 

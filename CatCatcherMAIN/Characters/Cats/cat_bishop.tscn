@@ -1,6 +1,6 @@
 [gd_scene load_steps=2 format=3]
 
-[ext_resource type="Texture2D" path="res://CatCatcherMAIN/Graphics/placeholders/cat_bishop.png" id="1_tex"]
+[ext_resource type="Texture2D" path="res://CatCatcherMAIN/Graphics/Cats/art_cat_bishop.png" id="1_tex"]
 
 [node name="CatBishop" type="Sprite2D"]
 scale = Vector2(0.3, 0.3)

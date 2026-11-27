@@ -31,6 +31,12 @@ const CAT_TYPES := ["rook", "rook"]
 const TITLE_LINES := ["CAT", "CATCHER"]
 const FONT_TITLE := 34
 
+## 手绘标题图（1024×768，不透明区域 x=26..997 / y=225..555）
+const TEX_TITLE := preload("res://CatCatcherMAIN/Graphics/Title/art_title.png")
+## 狗的三个样子（待机 / 低吼 / 困毙）—— 演示到"围死"那一刻换成困毙
+const TEX_DOG_IDLE := preload("res://CatCatcherMAIN/Graphics/Dog/art_dog_idle.png")
+const TEX_DOG_TRAPPED := preload("res://CatCatcherMAIN/Graphics/Dog/art_dog_trapped.png")
+
 ## 点一下开始的那声"嗒"（占位素材借自隔壁 hollow-bastion）
 const SFX_CLICK := preload("res://CatCatcherMAIN/Audio/sfx_click.mp3")
 
@@ -38,6 +44,7 @@ var config: Dictionary = {}
 var cell_size: int = 64
 var board_origin := Vector2i.ZERO
 var colors: Dictionary = {}
+var _control_alpha: float = 0.62     # 和 board 同一个配置项
 
 var _dog_node: Node2D = null
 var _meat_node: Node2D = null
@@ -45,6 +52,11 @@ var _cat_nodes: Array = []
 var _base_scale: Array = []
 var _flash: ColorRect = null
 var _banner: Label = null
+
+## 标题字用得意黑（和棋盘上的大字同一套）
+const FONT_DISPLAY := preload("res://CatCatcherMAIN/Fonts/DeYiHei/SmileySans-Oblique-3.otf")
+## 控制格爪印（和棋盘同一张图、同一个不透明度，演示里看到的规则图 = 进游戏后的样子）
+const TEX_CONTROL_CELL := preload("res://CatCatcherMAIN/Graphics/Grids/art_control_cell.png")
 
 var _t: float = 0.0
 var _landed: int = -1            # 已落地的猫数量（局面只在它变化时重算）
@@ -68,12 +80,14 @@ func _ready() -> void:
 	var o: Array = config["board"]["origin"]
 	board_origin = Vector2i(int(o[0]), int(o[1]))
 	colors = config["board"]["colors"]
+	_control_alpha = float(config["board"].get("control_alpha", 0.62))
 	RenderingServer.set_default_clear_color(Color(String(colors["bg"])))
 
 	_dog_node = $Units/Dog
 	_meat_node = $Units/Meat
 	_flash = $FxLayer/Flash
 	_banner = $FxLayer/Banner
+	_banner.add_theme_font_override("font", FONT_DISPLAY)
 	_cat_nodes = [$Units/CatRook, $Units/CatRook2]
 	for n in _cat_nodes:
 		_base_scale.append(n.scale)
@@ -160,6 +174,10 @@ func _update_units() -> void:
 			pos.x += sin(_t * 40.0) * 2.0      # 走不掉了，原地挣扎
 	_dog_node.position = pos
 	_dog_node.visible = demo
+	# 围死那一刻换成"困毙"姿势，和实战里赢了之后的样子一致
+	if _dog_node is Sprite2D:
+		var sprite := _dog_node as Sprite2D
+		sprite.texture = TEX_DOG_TRAPPED if (_trapped and demo) else TEX_DOG_IDLE
 
 	# 猫：依次落地（缩放从 0.35 长到 1），绿格随 _landed 增长自动多出来
 	for i in _cat_nodes.size():
@@ -194,25 +212,25 @@ func _draw() -> void:
 			var fill: Color = _color("cell") if (x + y) % 2 == 0 else _color("cell_alt")
 			draw_rect(_cell_rect(Vector2i(x, y)), fill)
 
-	# 控制格 = 狗走不进去的格。这一层色块就是整个玩法唯一要教的东西。
+	# 控制格 = 狗走不进去的格。这一层爪印就是整个玩法唯一要教的东西。
 	if _t < _hold_end:
+		var tint := Color(1.0, 1.0, 1.0, _control_alpha)
 		for cell in _controlled:
-			draw_rect(_cell_rect(cell), _color("control"))
+			draw_texture_rect(TEX_CONTROL_CELL, _cell_rect(cell), false, tint)
 
 	_draw_title()
 	_draw_click_cue()
 
 
 func _draw_title() -> void:
-	var font := ThemeDB.fallback_font
-	var cx := float(board_origin.x) * 0.5      # 棋盘左栏的中心
-	var y := 232.0
-	for line in TITLE_LINES:
-		var w := font.get_string_size(line, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_TITLE).x
-		draw_string(font, Vector2(cx - w * 0.5, y), line, HORIZONTAL_ALIGNMENT_LEFT, -1,
-			FONT_TITLE, _color("cell"))
-		y += float(FONT_TITLE) + 6.0
-	draw_line(Vector2(cx - 46.0, y + 4.0), Vector2(cx + 46.0, y + 4.0), _color("selected"), 2.0)
+	# 手绘标题图：不透明区域宽 972px，按 ~250px 显示 => k = 250/972
+	var want_w := 250.0
+	var k := want_w / 972.0
+	var center := Vector2(float(board_origin.x) * 0.5, 232.0)   # 棋盘左栏的中心
+	var size := Vector2(1024.0, 768.0) * k
+	# 不透明区域中心 (511.5, 390) 对齐到 center
+	var top_left := center - Vector2(511.5, 390.0) * k
+	draw_texture_rect(TEX_TITLE, Rect2(top_left, size), false)
 
 
 ## 「点一下开始」：光标箭头 + 一圈圈扩散的涟漪。不用文字。

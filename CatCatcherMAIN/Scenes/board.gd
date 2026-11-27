@@ -14,11 +14,45 @@ const FONT_BIG := 30
 const FONT_MID := 18
 const FONT_SMALL := 14
 
-## Core 只给 code，屏幕文案在这里 —— 默认字体没有 CJK 字形，中文会画成空白
+## ---- 字体 ----
+## 得意黑（Smiley Sans，斜体标题字）：大字、数字、棋盘上的警告标签。
+## 霞鹜文楷（LXGW WenKai，正文字）：HUD 说明文字、结算说明。
+const FONT_DISPLAY := preload("res://CatCatcherMAIN/Fonts/DeYiHei/SmileySans-Oblique-3.otf")
+const FONT_BODY := preload("res://CatCatcherMAIN/Fonts/LXGWWenKai-Regular/LXGWWenKai-Medium.ttf")
+
+## 单位平移的时长。原来是 0.16，改成"我方猫先动、狗后动"两拍后**速度翻倍**（各 0.08，
+## 总时长还是 0.16）—— 狗那一拍正好接在猫滑完的瞬间。
+const SLIDE_SECONDS := 0.08
+
+## 警告文字那一层的脚本（画在单位/障碍上面，见 _build_warn_layer）
+const WARN_LAYER := preload("res://CatCatcherMAIN/Scenes/warn_layer.gd")
+
+## ---- 美术：狗的三个状态 + 提示笔刷 ----
+## 狗的场景默认是待机图；低吼 / 撕咬 / 困毙在 _sync_units() 里换贴图（换美术只改这几张图）。
+const TEX_DOG_IDLE := preload("res://CatCatcherMAIN/Graphics/Dog/art_dog_idle.png")
+const TEX_DOG_GROWL := preload("res://CatCatcherMAIN/Graphics/Dog/art_dog_growl.png")
+const TEX_DOG_BITE := preload("res://CatCatcherMAIN/Graphics/Dog/art_dog_bite.png")
+const TEX_DOG_TRAPPED := preload("res://CatCatcherMAIN/Graphics/Dog/art_dog_trapped.png")
+## 提示箭头（蓝）= 尾巴（横线，沿长度方向拉伸）+ 头（默认朝左，按方向旋转）+ 落点圈
+const TEX_TIP_TAIL := preload("res://CatCatcherMAIN/Graphics/Tips/art_arrow_tail.png")
+const TEX_TIP_HEAD := preload("res://CatCatcherMAIN/Graphics/Tips/art_arrow_head.png")
+const TEX_TIP_RING := preload("res://CatCatcherMAIN/Graphics/Tips/art_ring.png")
+## 危险/预览箭头（橙）：悬停预览"狗下一步会干什么"用的同一套笔刷
+const TEX_WARN_LINE := preload("res://CatCatcherMAIN/Graphics/Tips/art_line_orange.png")
+const TEX_WARN_HEAD := preload("res://CatCatcherMAIN/Graphics/Tips/art_arrow_orange.png")
+const TEX_WARN_RING := preload("res://CatCatcherMAIN/Graphics/Tips/art_ring_orange.png")
+## 控制格（猫能罩住的格）：青色爪印方砖
+const TEX_CONTROL_CELL := preload("res://CatCatcherMAIN/Graphics/Grids/art_control_cell.png")
+## 右上角三个图标按钮
+const TEX_BTN_UNDO := preload("res://CatCatcherMAIN/Graphics/Button/art_btn_undo.png")
+const TEX_BTN_RESTART := preload("res://CatCatcherMAIN/Graphics/Button/art_btn_restart.png")
+const TEX_BTN_HINT := preload("res://CatCatcherMAIN/Graphics/Button/art_btn_hint.png")
+
+## Core 只给 code，屏幕文案在这里映射成中文（项目里自带 CJK 字体，web 版也能画）。
 const REASON_TEXT := {
-	"encircled": "the dog has nowhere to go",
-	"meat_eaten": "the dog got the meat",
-	"timeout": "you ran out of turns",
+	"encircled": "狗没路可走了",
+	"meat_eaten": "肉被狗吃掉了",
+	"timeout": "回合用完了",
 }
 
 ## 音效：占位素材借自隔壁 hollow-bastion（Audio/Sound_effect），改名成 ASCII 便于 web 导出。
@@ -39,6 +73,7 @@ var controller: GameController
 var cell_size: int = 64
 var board_origin := Vector2i.ZERO
 var colors: Dictionary = {}
+var _control_alpha: float = 0.92     # 控制格爪印的不透明度（配置 board.control_alpha）
 
 ## ---- 关卡场景与单位节点 ----
 var _level_root: Node2D = null      # 装着实例化进来的关卡场景
@@ -56,6 +91,7 @@ var _result_prompt: Label = null
 var _ui_layer: CanvasLayer = null
 var _undo_btn: Button = null
 var _restart_btn: Button = null
+var _hint_btn: Button = null
 
 ## ---- 音效播放器（3 个轮着用，避免互相打断）----
 var _sfx_players: Array = []
@@ -76,6 +112,13 @@ var _version: int = 0             # 局面版本号，每次行动 +1
 var _fail_count: int = 0          # 本关失败次数
 var _idle: float = 0.0            # 距上次操作的秒数
 var _hint_time: float = 0.0       # 引导箭头的浮动动画计时
+var _hint_forced: bool = false    # 玩家按了 "?" —— 这一关就一直给提示
+
+## ---- 警告文字/笔刷层（画在单位/障碍上面）----
+## board 的 _draw() 把要写的字、要画的笔刷塞进来，_warn_layer 负责落笔（见 _build_warn_layer）
+var warn_texts: Array = []
+var warn_draws: Array = []
+var _warn_layer: Node2D = null
 
 ## ---- 演出（M4 里不需要美术的那部分）----
 var _fx_layer: CanvasLayer = null
@@ -105,6 +148,7 @@ func _ready() -> void:
 	var o: Array = config["board"]["origin"]
 	board_origin = Vector2i(int(o[0]), int(o[1]))
 	colors = config["board"]["colors"]
+	_control_alpha = float(config["board"].get("control_alpha", 0.62))
 
 	controller = GameController.new()
 	controller.state_changed.connect(_on_state_changed)
@@ -114,15 +158,19 @@ func _ready() -> void:
 	_build_fx_layer()
 	_build_result_layer()
 	_build_ui_layer()
+	_build_warn_layer()
 	_build_audio()
 	print("[CatCatcher] 点猫选中 / 点高亮格移动（狗立刻行动）/ 悬停看威胁范围 | 右上角按钮或 Z 悔棋、R 重开 | 通关后任意键或点屏幕进下一关")
 
 	# 启动校验：每关都必须有解（求解器真搜，不是读标准答案糊弄）
-	var problems := Levels.validate_all(config)
-	for p in problems:
-		push_error("[关卡校验] " + String(p))
-	if problems.is_empty():
-		print("[CatCatcher] 关卡校验通过（%d 关全部有解）" % Levels.count())
+	# ⚠️ 只在 debug 版跑：8 关在 depth=6 全搜一遍要 1 秒（web 上更久），
+	#    玩家一点进棋盘就卡一秒不值当。发布包靠 tests/solvecheck.gd 在开发期守着。
+	if OS.is_debug_build():
+		var problems := Levels.validate_all(config)
+		for p in problems:
+			push_error("[关卡校验] " + String(p))
+		if problems.is_empty():
+			print("[CatCatcher] 关卡校验通过（%d 关全部有解）" % Levels.count())
 
 	# 从编辑器里 F6 单独跑某一关时，关卡场景会先把路径写进 RunRequest
 	var start := Levels.index_of_path(RunRequest.level_path)
@@ -167,6 +215,7 @@ func _start_level(index: int) -> void:
 	_selected = -1
 	_hover = Vector2i(-1, -1)
 	_fail_count = 0
+	_hint_forced = false       # 换关/重开就忘掉上一关按过的 "?"
 	_idle = 0.0
 	_bump_version()
 	_update_hint()
@@ -216,13 +265,52 @@ func _sync_units() -> void:
 		node.z_index = 2
 	if _dog_node != null:
 		_dog_node.z_index = 3
+		_sync_dog_face()
+
+
+## 狗的样子：围死（赢）=> 困毙；这回合要咬猫 => 撕咬；低吼中 => 低吼；其它 => 待机。
+## 只有一个来源：Core 的 state / DogAI.plan，别在这里自行判断"它看起来像要咬人了"。
+func _sync_dog_face() -> void:
+	if not (_dog_node is Sprite2D):
+		return
+	var sprite := _dog_node as Sprite2D
+	var act := "" if controller.finished else String(controller.preview_dog_action().get("kind", ""))
+	if controller.finished and controller.won:
+		sprite.texture = TEX_DOG_TRAPPED
+	elif act == "flick":
+		sprite.texture = TEX_DOG_BITE
+	elif controller.state.growling:
+		sprite.texture = TEX_DOG_GROWL
+	else:
+		sprite.texture = TEX_DOG_IDLE
 
 
 func _cell_center(cell: Vector2i) -> Vector2:
 	return Vector2(board_origin) + Vector2(cell) * cell_size + Vector2(cell_size, cell_size) * 0.5
 
 
+## 平移小动画：把节点摆回 from 再滑到 to。位置真相永远是 _sync_units() 摆好的那个，
+## 这里只补最后一跳的观感（同一帧内先摆回原位，看不出跳变）。
+## ponytail: 不做 tween 去重 —— 两条 tween 抢同一个 position 时后建的每帧最后写，视觉上不会抖。
+func _slide_unit(node: Node2D, from: Vector2, to: Vector2) -> void:
+	if node == null or from.is_equal_approx(to):
+		return
+	node.position = from
+	create_tween().bind_node(node).tween_property(node, "position", to, SLIDE_SECONDS) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+
+
 # ---------------------------------------------------------------- 提示 ----
+
+## 警告文字独立成一层：单位和障碍是 board 的子节点，永远压在 board 自己的 _draw() 上（9.2），
+## 所以棋盘上的字必须由一个**后画的兄弟节点**来画。z_index 要高于撞飞残影（40）。
+func _build_warn_layer() -> void:
+	_warn_layer = WARN_LAYER.new()
+	_warn_layer.name = "WarnLayer"
+	_warn_layer.board = self
+	_warn_layer.z_index = 60
+	add_child(_warn_layer)
+
 
 func _bump_version() -> void:
 	_version += 1
@@ -236,6 +324,8 @@ func _hint_cfg(key: String, fallback: float) -> float:
 func _hint_due() -> bool:
 	if controller.finished:
 		return false
+	if _hint_forced:
+		return true                                       # 玩家按了 "?"，这一关一直给
 	if _level_index < int(_hint_cfg("tutorial_levels", 2)):
 		return true                                       # 前几关强引导
 	if _fail_count >= int(_hint_cfg("fail_threshold", 2)):
@@ -302,17 +392,21 @@ func _draw() -> void:
 	if level == null:
 		return
 	var state := controller.state
+	warn_texts.clear()          # 警告文字/笔刷这一帧要重算（由 _warn_layer 落笔）
+	warn_draws.clear()
 	_draw_cells()
 
 	var controlled := MoveRules.controlled_cells(state)
 	_draw_control(controlled)
 	_draw_focus_reach()
-	_draw_dog_warning(controlled)
+	_draw_dog_warning(controlled, _preview_labels_dog())
 	_draw_preview()
 	_draw_selection()
 	_draw_hit_burst()
 	_draw_hint()
 	_draw_hud()
+	if _warn_layer != null:
+		_warn_layer.queue_redraw()
 	# 结算界面不在这里画 —— 单位是场景子节点，会盖住 _draw() 的内容。
 	# 结算用 CanvasLayer（永远在最上层），见 _build_result_layer。
 
@@ -326,8 +420,11 @@ func _draw_cells() -> void:
 
 
 func _draw_control(controlled: Dictionary) -> void:
+	# 控制格 = 猫罩得住的格 = 狗进不去的格。这张爪印方砖就是整个玩法唯一要教的东西。
+	# 不透明度走配置（board.control_alpha）：铺满半块盘时全不透明太抢眼。
+	var tint := Color(1.0, 1.0, 1.0, _control_alpha)
 	for cell in controlled:
-		draw_rect(_cell_rect(cell), _color("control"))
+		draw_texture_rect(TEX_CONTROL_CELL, _cell_rect(cell), false, tint)
 
 
 ## 选中那只猫的控制范围再压一层，方便看清"这只猫管到哪"。
@@ -358,37 +455,49 @@ func _draw_hit_burst() -> void:
 
 ## 狗站在被控制的格上 => 红色描边（"它已经被罩住了"）
 ## 狗贴着肉格 => 肉格描红；已经低吼过 => 加粗 + "EAT!"，这是最后的警告
-func _draw_dog_warning(controlled: Dictionary) -> void:
+## hide_text：悬停预览正在狗头上那一行写字时闭嘴 —— 两者是同一格同一行，都画就是叠字。
+func _draw_dog_warning(controlled: Dictionary, hide_text := false) -> void:
 	var state := controller.state
 	var dog_cell: Vector2i = state.dog["pos"]
 	var dog_cfg: Dictionary = config.get("dog", {})
 	var width := float(dog_cfg.get("warning_width", 3))
+	var red := Color(String(dog_cfg.get("warning_outline", "#e03e3e")))
+
+	# 这回合狗究竟会干什么 —— **整个函数只算一次**，狗头和肉格两边共用同一个答案。
+	# 各画各的曾经出过事：狗贴着肉时狗头写 "EATING THE MEAT"、肉格又写 "EAT!"，两行字叠在一起。
+	var act := ""
+	if not controller.finished:
+		act = String(controller.preview_dog_action().get("kind", ""))
 
 	if controlled.has(dog_cell):
-		draw_rect(_cell_rect(dog_cell), Color(String(dog_cfg.get("warning_outline", "#e03e3e"))), false, width)
+		draw_rect(_cell_rect(dog_cell), red, false, width)
 
+		# 罩住了 ≠ 赶得走：念它这回合真正会做的动作（DogAI.plan 是唯一来源）。
+		if not hide_text:
+			var cx := _cell_rect(dog_cell).get_center().x
+			var ty := _cell_rect(dog_cell).position.y - 8.0
+			match act:
+				"flee":
+					_warn_text("逃跑", cx, ty, FONT_SMALL, red)
+				"flick":
+					_warn_text("先咬猫", cx, ty, FONT_SMALL, _color("selected"))
+
+		# 没被保护的猫任何时候都标出来（"它吃得到谁"这条信息成立，跟它先吃谁无关）
 		if not controller.finished:
-			if Encircle.can_flee(state):
-				# 会被赶走：它下回合自己跑
-				_text_centered("FLEE", _cell_rect(dog_cell).get_center().x,
-					_cell_rect(dog_cell).position.y - 8.0, FONT_SMALL,
-					Color(String(dog_cfg.get("warning_outline", "#e03e3e"))))
-			else:
-				# 罩住了但赶不动：旁边有吃得掉的猫，它会先咬那只
-				_text_centered("WILL BITE", _cell_rect(dog_cell).get_center().x,
-					_cell_rect(dog_cell).position.y - 8.0, FONT_SMALL, _color("selected"))
-				var bite := Color("#e07a3e")
-				for f in Encircle.flickable_cats(state):
-					var r := _cell_rect(f["cell"]).grow(-4)
-					draw_rect(r, bite, false, 2.5)
-					_text_centered("!", r.get_center().x, r.position.y + 12.0, FONT_SMALL, bite)
+			var bite := Color("#e07a3e")
+			for f in Encircle.flickable_cats(state):
+				var r := _cell_rect(f["cell"]).grow(-4)
+				draw_rect(r, bite, false, 2.5)
+				_warn_text("!", r.get_center().x, r.position.y + 12.0, FONT_SMALL, bite)
 
+	# 肉格：**吃肉预警只画在这一处**（狗头那边不再重复）。
 	var d: Vector2i = dog_cell - state.meat_pos
 	if absi(d.x) + absi(d.y) == 1:
 		var meat_rect := _cell_rect(state.meat_pos)
-		draw_rect(meat_rect, _color("growl"), false, width if state.growling else 2.0)
-		if state.growling:
-			_text_centered("EAT!", meat_rect.get_center().x, meat_rect.position.y - 8, FONT_MID, _color("growl"))
+		var hot := act == "eat" or act == "growl"      # 真要吃 / 马上要吃
+		draw_rect(meat_rect, _color("growl"), false, width if hot else 2.0)
+		if act == "eat" and not hide_text:
+			_warn_text("吃肉!", meat_rect.get_center().x, meat_rect.position.y - 8, FONT_MID, _color("growl"))
 
 
 ## 敌方行动预览 + 威胁范围：鼠标停在一个可走的格子上就显示。
@@ -417,21 +526,20 @@ func _draw_preview() -> void:
 
 	if kind == "encircled":
 		var dog_rect := _cell_rect(controller.state.dog["pos"])
-		_text_centered("ENCIRCLED", dog_rect.get_center().x, dog_rect.position.y - 8, FONT_MID, Color("#7fb069"))
+		_warn_text("围死了!", dog_rect.get_center().x, dog_rect.position.y - 8, FONT_MID, Color("#7fb069"))
 		return
 	if kind == "none":
 		return
 	if kind == "growl":
 		var growl_rect := _cell_rect(controller.state.dog["pos"])
-		_text_centered("GROWL", growl_rect.get_center().x, growl_rect.position.y - 8, FONT_MID, warn)
+		_warn_text("低吼", growl_rect.get_center().x, growl_rect.position.y - 8, FONT_MID, warn)
 		return
 	if kind == "flee":
 		# 罩住它站的格 => 它下回合会往安全格跑
 		var flee_to := _cell_rect(preview["to"]).get_center()
 		var flee_from := _cell_rect(controller.state.dog["pos"]).get_center()
-		draw_line(flee_from, flee_to, warn, 3.0)
-		draw_arc(flee_to, cell_size * 0.32, 0.0, TAU, 24, warn, 3.0)
-		_text_centered("FLEE", flee_from.x, _cell_rect(controller.state.dog["pos"]).position.y - 8, FONT_SMALL, warn)
+		_draw_warn_arrow(flee_from, flee_to)
+		_warn_text("逃跑", flee_from.x, _cell_rect(controller.state.dog["pos"]).position.y - 8, FONT_SMALL, warn)
 		return
 
 	var target: Vector2i = preview["to"]
@@ -443,10 +551,11 @@ func _draw_preview() -> void:
 	# ① 先画"走到这一格之后，这只猫会控住哪些格"—— 这是玩家最想知道的那件事
 	var after_move := controller.state.clone()
 	after_move.cats[cat_index]["pos"] = _hover
-	var hyp_fill := _color("control").lightened(0.28)
+	# 半透明的爪印（和真正控制格同一张图），加绿边表示"这是走完之后才会有的控制"
+	var ghost_tint := Color(1.0, 1.0, 1.0, 0.45)
 	var hyp_edge := Color(0.60, 0.86, 0.44, 0.9)
 	for cell in MoveRules.reach_cells(after_move, cat_index):
-		draw_rect(_cell_rect(cell), hyp_fill)
+		draw_texture_rect(TEX_CONTROL_CELL, _cell_rect(cell), false, ghost_tint)
 		draw_rect(_cell_rect(cell).grow(-3), hyp_edge, false, 1.5)
 
 	# ② 威胁范围：把这一步真的走一遍，看狗**再下一步**能碰到哪些格
@@ -459,9 +568,34 @@ func _draw_preview() -> void:
 			draw_rect(_cell_rect(threat_cell), threat_fill)
 			draw_rect(_cell_rect(threat_cell).grow(-2), warn, false, 2.0)
 
-	# ③ 箭头和落点画在最上面
-	draw_line(from, to, warn, 3.0)
-	draw_arc(to, cell_size * 0.32, 0.0, TAU, 24, warn, 3.0)
+	# ③ 箭头和落点画在最上面（手绘橙色笔刷，和蓝色提示箭头同一套画法）
+	_draw_warn_arrow(from, to)
+
+
+## 橙色笔刷箭头：尾巴 + 头 + 落点圈。悬停预览用（狗这回合会做什么 / 会逃到哪）。
+func _draw_warn_arrow(from: Vector2, to: Vector2) -> void:
+	var d := to - from
+	if d.length() < 1.0:
+		return
+	var dir := d.normalized()
+	var ring_px := cell_size * 0.40
+	_draw_brush_center(TEX_WARN_RING, to, ring_px)
+	_draw_brush_tail(TEX_WARN_LINE, from + dir * cell_size * 0.18, to - dir * ring_px * 0.42)
+	_draw_brush_head(TEX_WARN_HEAD, to - dir * ring_px * 0.42, dir, cell_size * 0.34)
+
+
+## 悬停预览会不会在狗头上那一行写字（FLEE / GROWL / ENCIRCLED）。
+## 会和"当前局面"的 FLEE / WILL BITE 撞同一行 —— 谁在预览，静态那行就让位。
+func _preview_labels_dog() -> bool:
+	if controller.finished:
+		return false
+	var cat_index := _preview_cat_index()
+	if cat_index < 0:
+		return false
+	var preview := controller.preview_after(cat_index, _hover)
+	if preview.is_empty():
+		return false
+	return String(preview["kind"]) in ["flee", "growl", "encircled"]
 
 
 ## 预览只对**选中的那只猫**生效 —— 和隔壁一致，鼠标闲着扫棋盘不会到处冒预览。
@@ -479,105 +613,69 @@ func _draw_selection() -> void:
 	draw_rect(_cell_rect(controller.state.cats[_selected]["pos"]), _color("selected"), false, 4.0)
 
 
-## 引导：多邻国那套 —— 一条从"该动的那只猫"指向目标格的大箭头，
-## 外加猫头顶上下浮动的小箭头（"点这一只"）。所有形状都先画深色描边再画本体，
-## 保证在任何底色上都看得清。来源是求解器，见 _update_hint。
+## 引导：一条从"该动的那只猫"指向目标格的手绘箭头 + 落点圈，外加猫头顶上下浮动的小箭头
+## （"点这一只"）。全部用 Tips/ 里的三张笔刷贴图画，不再自己拼多边形。
+## 方向来源是求解器，见 _update_hint。
 func _draw_hint() -> void:
 	if _hint_step.is_empty() or controller.finished:
 		return
 
-	var cat_cell := _hint_cell(_hint_step["cat"])
-	var from := _cell_rect(cat_cell).get_center()
+	var from := _cell_rect(_hint_cell(_hint_step["cat"])).get_center()
 	var to := _cell_rect(_hint_cell(_hint_step["to"])).get_center()
-	var fill := _color("hint")
-	var edge := Color(0.10, 0.13, 0.18, 0.92)
+	var d := to - from
+	if d.length() < 1.0:
+		return
+	var dir := d.normalized()
 
-	# 一步之遥时格子之间本来就没多少空地，落点圈得缩小，否则箭头会被挤成一坨
-	var ring_r := cell_size * (0.26 if from.distance_to(to) < cell_size * 1.45 else 0.36)
+	# 一步之遥时格子之间本来就没多少空地，圈和箭头都得缩小，否则挤成一坨
+	var near := d.length() < cell_size * 1.45
+	var ring_px := cell_size * (0.50 if near else 0.70)
 
-	_draw_hint_arrow(from, to, ring_r, fill, edge)
+	# 落点圈（画最下层，箭头压在它上面）
+	_draw_brush_center(TEX_TIP_RING, to, ring_px)
+	# 尾巴：从猫那一格的边缘拉到圈的外侧
+	var start := from + dir * cell_size * 0.22
+	var tip := to - dir * (ring_px * 0.42)
+	_draw_brush_tail(TEX_TIP_TAIL, start, tip)
+	# 箭头：笔刷默认朝左，按方向转过去，并把"笔尖"对准 tip
+	_draw_brush_head(TEX_TIP_HEAD, tip, dir, cell_size * (0.36 if near else 0.46))
 
-	# 落点圈：强调"就是这里"（箭头停在圈外）
-	draw_arc(to, ring_r, 0.0, TAU, 28, edge, 5.0)
-	draw_arc(to, ring_r, 0.0, TAU, 28, fill, 2.5)
-
-	# 猫头顶浮动的指示箭头
+	# 猫头顶浮动的小箭头：同一个笔刷缩小、朝下
 	var bob := sin(_hint_time * 4.5) * cell_size * 0.07
-	_draw_hint_chevron(Vector2(from.x, from.y - cell_size * 0.62 + bob), fill, edge)
+	_draw_brush_head(TEX_TIP_HEAD, Vector2(from.x, from.y - cell_size * 0.50 + bob), Vector2.DOWN, cell_size * 0.26)
 
 
-## 从 from 指向 to 的粗箭头（描边 + 本体 + 箭头三角）
-## 一格距离时改画"朝目标方向"的指示三角 —— 长箭头在那个距离上根本铺不开。
-func _draw_hint_arrow(from: Vector2, to: Vector2, ring_r: float, fill: Color, edge: Color) -> void:
-	var dir := to - from
-	var dist := dir.length()
-	if dist < 1.0:
+## 把一张笔刷贴图按"可见区域"居中画在 at 处，可见直径约 want_px。
+## 200×200 的画布里图形只占一部分，所以按实测的不透明包围盒换算，不然会画小一圈。
+## （蓝/橙两套笔刷的包围盒一致，所以共用这一份换算。）
+## ⚠️ 笔刷和警告文字一样会被单位贴图盖住，所以这里只登记，交给 _warn_layer 画。
+func _draw_brush_center(tex: Texture2D, at: Vector2, want_px: float) -> void:
+	var k := want_px / 179.0                      # 圈的不透明宽度 = 179
+	var side := 200.0 * k
+	# ⚠️ rect 必须是**相对 pivot 的本地坐标**：_warn_layer 会先 draw_set_transform(at, ...)
+	_brush_draw(tex, at, 0.0, Rect2(-Vector2(side, side) * 0.5, Vector2(side, side)))
+
+
+## 尾巴：一条横线笔刷，沿 from→to 拉伸（粗细不变）。不透明区域 y=81..120 => 中心 y=100.5、粗 40。
+func _draw_brush_tail(tex: Texture2D, from: Vector2, to: Vector2) -> void:
+	var d := to - from
+	var length := d.length()
+	if length < 6.0:
 		return
-	dir = dir.normalized()
-	var side := Vector2(-dir.y, dir.x)
-
-	if dist < cell_size * 1.45:
-		var tip := to - dir * (ring_r + 5.0)
-		var base := from + dir * cell_size * 0.24
-		if base.distance_to(tip) > 10.0:
-			_draw_hint_pointer(base, tip, dir, side, fill, edge)
-		return
-
-	var start := from + dir * cell_size * 0.26
-	var tip := to - dir * (ring_r + 8.0)
-	var head_len := clampf(dist * 0.34, cell_size * 0.18, cell_size * 0.26)
-	var head_half := cell_size * 0.17
-	var base := tip - dir * head_len
-
-	# 描边层
-	draw_line(start, base, edge, 9.0)
-	draw_colored_polygon(PackedVector2Array([
-		tip + dir * 4.0,
-		base + side * (head_half + 4.0),
-		base - side * (head_half + 4.0),
-	]), edge)
-
-	# 本体
-	draw_line(start, base, fill, 5.0)
-	draw_colored_polygon(PackedVector2Array([
-		tip,
-		base + side * head_half,
-		base - side * head_half,
-	]), fill)
+	var want_thick := cell_size * 0.16
+	var k := want_thick / 40.0                    # 画布里线宽 40px
+	_brush_draw(tex, from, d.angle(), Rect2(0.0, -100.5 * k, length, 200.0 * k))
 
 
-## 一个从 base 指到 tip 的指示三角（短距离提示用）
-func _draw_hint_pointer(base: Vector2, tip: Vector2, dir: Vector2, side: Vector2, fill: Color, edge: Color) -> void:
-	var head_half := cell_size * 0.17
-	var head_base := tip - dir * minf(cell_size * 0.22, base.distance_to(tip) * 0.8)
-	draw_line(base, head_base, edge, 9.0)
-	draw_line(base, head_base, fill, 5.0)
-	draw_colored_polygon(PackedVector2Array([
-		tip + dir * 4.0,
-		head_base + side * (head_half + 4.0),
-		head_base - side * (head_half + 4.0),
-	]), edge)
-	draw_colored_polygon(PackedVector2Array([
-		tip,
-		head_base + side * head_half,
-		head_base - side * head_half,
-	]), fill)
+## 箭头：笔刷默认朝左（笔尖在不透明区域的 x=4）；转过去并让笔尖落在 tip 上。
+func _draw_brush_head(tex: Texture2D, tip: Vector2, dir: Vector2, want_len: float) -> void:
+	var k := want_len / 196.0                     # 不透明区域宽 196
+	_brush_draw(tex, tip, dir.angle() - PI, Rect2(-4.0 * k, -101.5 * k, 200.0 * k, 200.0 * k))
 
 
-## 朝下的指示三角（"点这一只"）
-func _draw_hint_chevron(tip: Vector2, fill: Color, edge: Color) -> void:
-	var w := cell_size * 0.20
-	var h := cell_size * 0.24
-	draw_colored_polygon(PackedVector2Array([
-		tip + Vector2(0, 4),
-		tip + Vector2(-w - 4, -h - 4),
-		tip + Vector2(w + 4, -h - 4),
-	]), edge)
-	draw_colored_polygon(PackedVector2Array([
-		tip,
-		tip + Vector2(-w, -h),
-		tip + Vector2(w, -h),
-	]), fill)
+## 记一次笔刷绘制：绕 pivot 转 rot 度画 rect（rect 是相对 pivot 的本地坐标）。
+func _brush_draw(tex: Texture2D, pivot: Vector2, rot: float, rect: Rect2) -> void:
+	warn_draws.append({ "tex": tex, "pivot": pivot, "rot": rot, "rect": rect })
 
 
 func _hint_cell(arr: Array) -> Vector2i:
@@ -589,35 +687,46 @@ func _draw_hud() -> void:
 	var bar_w := level.w * cell_size
 	var bar_pos := Vector2(board_origin.x, board_origin.y + level.h * cell_size + 14)
 
-	_text("TURN %d / %d" % [state.turn, level.max_turns], bar_pos, FONT_MID, Color(0.9, 0.87, 0.8))
-	_text("LEVEL %d / %d" % [_level_index + 1, Levels.count()],
-		bar_pos + Vector2(bar_w - 96, 0), FONT_MID, Color(0.9, 0.87, 0.8))
+	_text("回合 %d / %d" % [state.turn, level.max_turns], bar_pos, FONT_MID,
+		Color(0.9, 0.87, 0.8), FONT_DISPLAY)
+	_text("关卡 %d / %d" % [_level_index + 1, Levels.count()],
+		bar_pos + Vector2(bar_w - 96, 0), FONT_MID, Color(0.9, 0.87, 0.8), FONT_DISPLAY)
 
 	# 回合流程：点猫 -> 点高亮格 => 走完狗立刻行动
 	if not controller.finished:
-		_text("tap a cat, then a highlighted cell",
+		_text("点一只猫，再点高亮格",
 			bar_pos + Vector2(0, 26), FONT_SMALL, Color(0.78, 0.74, 0.66))
-		# 狗已经低吼过 => 下一回合就吃肉了，这是最后的警告
-		if state.growling:
-			_text("THE DOG IS GROWLING - COVER THE MEAT!",
-				bar_pos + Vector2(0, 46), FONT_SMALL, _color("growl"))
-		elif Encircle.can_flee(state):
-			_text("covering the dog makes it run - herd it into a corner",
+		# 顺序有讲究：**罩住了会跑**优先于"它在低吼" —— 逃跑会打断低吼，这时喊"快去垫肉"反而是错的。
+		if Encircle.can_flee(state):
+			_text("罩住狗那格，它自己会跑 —— 把它赶进角落",
 				bar_pos + Vector2(0, 46), FONT_SMALL, _color("selected"))
 		elif MoveRules.controlled_cells(state).has(state.dog["pos"]):
-			# 常见误解：罩住了不等于赶得走 —— 它旁边有能吃的猫就先咬人
-			_text("it would bite an unprotected cat first",
-				bar_pos + Vector2(0, 46), FONT_SMALL, Color("#e07a3e"))
+			# 罩住了 ≠ 赶得走。直接念它这回合真正会做的动作（DogAI.plan 是唯一来源），
+			# 别在这儿另猜一套条件 —— "低吼时罩住它为什么不动"的答案就在这两行字里。
+			var act := String(controller.preview_dog_action().get("kind", ""))
+			if act == "flick":
+				_text("它先去咬没人罩的猫",
+					bar_pos + Vector2(0, 46), FONT_SMALL, Color("#e07a3e"))
+			elif act == "eat":
+				_text("它要吃肉了 —— 把猫垫到肉格上",
+					bar_pos + Vector2(0, 46), FONT_SMALL, _color("growl"))
+			else:
+				_text("它动不了，但还够得着肉",
+					bar_pos + Vector2(0, 46), FONT_SMALL, Color("#e07a3e"))
+		elif state.growling:
+			# 狗已经低吼过 => 下一回合就吃肉了，这是最后的警告
+			_text("狗在低吼 —— 快垫肉！",
+				bar_pos + Vector2(0, 46), FONT_SMALL, _color("growl"))
 
-	_text("Z undo     R restart", bar_pos + Vector2(0, 84), FONT_SMALL, Color(0.62, 0.58, 0.5))
+	_text("Z 悔棋     R 重开", bar_pos + Vector2(0, 84), FONT_SMALL, Color(0.62, 0.58, 0.5))
 
 	# 提示文字放棋盘右侧空白处，别挤 HUD 下面那点地方
 	if not _hint_step.is_empty() and not controller.finished:
 		var cat_cell := _hint_cell(_hint_step["cat"])
 		var to_cell := _hint_cell(_hint_step["to"])
-		_text("HINT", bar_pos + Vector2(bar_w + 24, 6), FONT_SMALL, _color("hint"))
-		_text("(%d,%d)" % [cat_cell.x, cat_cell.y], bar_pos + Vector2(bar_w + 24, 26), FONT_SMALL, Color(0.85, 0.82, 0.76))
-		_text("-> (%d,%d)" % [to_cell.x, to_cell.y], bar_pos + Vector2(bar_w + 24, 44), FONT_SMALL, Color(0.85, 0.82, 0.76))
+		_text("提示", bar_pos + Vector2(bar_w + 24, 6), FONT_SMALL, _color("hint"), FONT_DISPLAY)
+		_text("(%d,%d)" % [cat_cell.x, cat_cell.y], bar_pos + Vector2(bar_w + 24, 26), FONT_SMALL, Color(0.85, 0.82, 0.76), FONT_DISPLAY)
+		_text("→ (%d,%d)" % [to_cell.x, to_cell.y], bar_pos + Vector2(bar_w + 24, 44), FONT_SMALL, Color(0.85, 0.82, 0.76), FONT_DISPLAY)
 
 
 # ------------------------------------------------------------ 演出（无美术）----
@@ -648,6 +757,7 @@ func _build_fx_layer() -> void:
 	_banner.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_banner.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_banner.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_banner.add_theme_font_override("font", FONT_DISPLAY)
 	_banner.add_theme_font_size_override("font_size", 52)
 	_banner.add_theme_color_override("font_color", Color("#fff4d6"))
 	_banner.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -684,7 +794,7 @@ func _start_finish_fx(is_win: bool) -> void:
 	_fx_seq = "win" if is_win else "lose"
 	_fx_t = 0.0
 	if is_win:
-		_banner.text = "ENCIRCLED!"
+		_banner.text = "围死了！"
 		_banner.add_theme_color_override("font_color", Color("#c9f08a"))
 		_shake(0.6, 14.0)
 	else:
@@ -740,9 +850,9 @@ func _clear_fx() -> void:
 		_banner_wrap.scale = Vector2.ONE
 
 
-## 猫被撞飞（被狗吃掉）：**螺旋起飞** —— 往上飞、绕两圈、缩小淡出。
+## 猫被撞飞（被狗吃掉）：**原地疯狂旋转 + 朝一个方向直飞出去**。
 ## 用的是猫自己那张贴图的副本，所以换美术不用改这里；残影只是视觉，不参与任何规则运算。
-## 参数偏"夸张"是故意的：小贴图 + 1 秒的位移在手机上很容易看漏。
+## 参数偏"夸张"是故意的：小贴图 + 一秒的位移在手机上很容易看漏。
 func _spawn_takeoff(source: Node2D, cell: Vector2i) -> void:
 	if source == null or not (source is Sprite2D):
 		return
@@ -762,20 +872,24 @@ func _spawn_takeoff(source: Node2D, cell: Vector2i) -> void:
 
 	var base := ghost.position
 	var base_scale := sprite.scale * 1.35
+	# 飞出去的方向 = **背离狗**（被撞飞的方向感）。同一格理论上不会发生，兜底朝右上。
+	var dir := base - _cell_center(controller.state.dog["pos"])
+	if dir.length() < 1.0:
+		dir = Vector2(0.6, -1.0)
 	var tween := create_tween()
-	tween.tween_method(_tick_takeoff.bind(ghost, base, base_scale), 0.0, 1.0, 1.5)
+	tween.tween_method(_tick_takeoff.bind(ghost, base, base_scale, dir.normalized()), 0.0, 1.0, 1.2)
 	tween.tween_callback(ghost.queue_free)
 
 
-## 螺旋轨迹：x 绕两圈摆（半径 36），y 一路升 200px，边转边缩，后半程淡出。
-func _tick_takeoff(p: float, ghost: Sprite2D, base: Vector2, base_scale: Vector2) -> void:
+## 撞飞轨迹：Sprite2D 的 rotation 就是绕**自身原点**转，所以"原地疯狂旋转"和"朝一个方向平移"
+## 直接叠加即可 —— 1.2 秒转 6 圈、直线飞 320px、边飞边缩、后半程淡出。
+func _tick_takeoff(p: float, ghost: Sprite2D, base: Vector2, base_scale: Vector2, dir: Vector2) -> void:
 	if not is_instance_valid(ghost):
 		return
-	var turn := p * TAU * 2.0
-	ghost.position = base + Vector2(cos(turn) * 36.0, -p * 200.0)
-	ghost.rotation = turn
-	ghost.scale = base_scale * (1.0 - 0.78 * p)
-	ghost.modulate.a = 1.0 - clampf((p - 0.55) / 0.45, 0.0, 1.0)
+	ghost.rotation = p * TAU * 6.0
+	ghost.position = base + dir * (320.0 * p)
+	ghost.scale = base_scale * (1.0 - 0.55 * p)
+	ghost.modulate.a = 1.0 - clampf((p - 0.5) / 0.5, 0.0, 1.0)
 
 
 # ------------------------------------------------------------ 结算界面 ----
@@ -809,7 +923,7 @@ func _build_ui_layer() -> void:
 	_ui_layer.layer = 6
 	add_child(_ui_layer)
 
-	_undo_btn = _make_hud_button("UNDO", 1)
+	_undo_btn = _make_icon_button(TEX_BTN_UNDO, 1, "悔棋 (Z)")
 	_undo_btn.pressed.connect(func() -> void:
 		_sfx("click")
 		controller.undo()
@@ -820,26 +934,40 @@ func _build_ui_layer() -> void:
 		_sync_units()
 		queue_redraw())
 
-	_restart_btn = _make_hud_button("RESTART", 0)
+	_restart_btn = _make_icon_button(TEX_BTN_RESTART, 0, "重开 (R)")
 	_restart_btn.pressed.connect(func() -> void:
 		_sfx("click")
 		_start_level(_level_index))
 
+	# "?" = 主动要提示：和第一关那种常驻引导**长得一样**（同一个 _hint_step 渲染路径），
+	# 只是把"该不该给"的判断短路掉，这一关后面就一直给
+	_hint_btn = _make_icon_button(TEX_BTN_HINT, 2, "提示")
+	_hint_btn.pressed.connect(func() -> void:
+		_sfx("click")
+		_hint_forced = true
+		_hint_version = -1        # 强制重算（之前可能因为"不该给提示"被判成空）
+		_update_hint()
+		queue_redraw())
+
 	_refresh_buttons()
 
 
-## slot 0 = 最靠右，slot 1 = 它左边一个
-func _make_hud_button(text: String, slot: int) -> Button:
+## 右上角的图标按钮（美术：Graphics/Button/）。slot 0 = 最靠右，slot 1/2 依次往左。
+## 图标是手绘笔刷，背景保持默认的深色圆角块（在浅色棋盘上才看得清）。
+func _make_icon_button(tex: Texture2D, slot: int, tip: String) -> Button:
 	var b := Button.new()
-	b.text = text
+	b.icon = tex
 	b.anchor_left = 1.0
 	b.anchor_right = 1.0
-	b.offset_left = -136.0 - 140.0 * slot
-	b.offset_right = -16.0 - 140.0 * slot
-	b.offset_top = 10.0
-	b.offset_bottom = 44.0
+	b.offset_left = -60.0 - 62.0 * slot
+	b.offset_right = -8.0 - 62.0 * slot
+	b.offset_top = 8.0
+	b.offset_bottom = 48.0
 	b.focus_mode = Control.FOCUS_NONE
-	b.add_theme_font_size_override("font_size", 15)
+	b.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	b.expand_icon = false
+	b.add_theme_constant_override("icon_max_width", 32)
+	b.tooltip_text = tip
 	_ui_layer.add_child(b)
 	return b
 
@@ -870,6 +998,7 @@ func _sfx(key: String) -> void:
 
 
 ## 一条占满整个视口宽度的横带，文字居中。
+## 大标题（size >= FONT_MID 那档）用得意黑，说明文字用文楷。
 func _make_result_label(top: int, height: int, size: int, tint: Color) -> Label:
 	var l := Label.new()
 	l.anchor_left = 0.0
@@ -880,6 +1009,7 @@ func _make_result_label(top: int, height: int, size: int, tint: Color) -> Label:
 	l.offset_bottom = float(top + height)
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	l.add_theme_font_override("font", FONT_DISPLAY if size >= FONT_MID else FONT_BODY)
 	l.add_theme_font_size_override("font_size", size)
 	l.add_theme_color_override("font_color", tint)
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -890,17 +1020,17 @@ func _make_result_label(top: int, height: int, size: int, tint: Color) -> Label:
 func _show_result() -> void:
 	if _result_layer == null:
 		return
-	_result_title.text = "YOU WIN" if controller.won else "YOU LOSE"
+	_result_title.text = "赢了！" if controller.won else "输了…"
 	_result_title.add_theme_color_override("font_color",
 		Color("#8fd17a") if controller.won else Color("#e0705e"))
 	_result_reason.text = String(REASON_TEXT.get(controller.result_reason, controller.result_reason))
 
-	var prompt := "press R to restart"
+	var prompt := "按 R 重开"
 	if controller.won:
 		if _has_next_level():
-			prompt = "tap or press any key for the next level"
+			prompt = "点屏幕或按任意键，进入下一关"
 		else:
-			prompt = "all levels cleared - tap to replay"
+			prompt = "全部通关！点屏幕重玩"
 	_result_prompt.text = prompt
 	_result_layer.visible = true
 
@@ -986,6 +1116,9 @@ func _handle_tap(cell: Vector2i) -> void:
 
 ## 走一步：走完狗立刻行动，顺便播反馈。
 ## 全靠"动手前后对比 state"判断发生了什么，不需要 Core 额外回报。
+##
+## 【演出是异步的两拍】我方猫先滑过去，**狗那一拍等猫滑完才动**（撞飞残影、震屏、音效都算狗那一拍）：
+## 同时动的话看不出"我走了一步，它才反应"，而且猫被打飞的因果读不出来。
 func _apply_move(cat_index: int, to: Vector2i) -> void:
 	var before_dog: Vector2i = controller.state.dog["pos"]
 	var before_cells: Array = []
@@ -994,40 +1127,68 @@ func _apply_move(cat_index: int, to: Vector2i) -> void:
 
 	controller.move_cat(cat_index, to)
 
-	var eaten := false
-
 	# 狗吃到肉 => 红光 + 震屏（结算演出接着上）
-	if controller.result_reason == "meat_eaten":
+	var meat_eaten := controller.result_reason == "meat_eaten"
+	if meat_eaten:
 		_punch_meat()
 		_shake(0.3, 8.0)
-	# 有猫被吃掉 => 螺旋起飞残影
-	# ⚠️ 必须跳过玩家刚走的那只猫 —— 它的位置也变了，但那是自己走的，不是被吃
+
+	# 哪几只猫被吃掉了（撞飞残影留到狗那一拍再播）
+	# ⚠️ 不能一律跳过玩家刚走的那只：**垫在肉格上的猫正是它刚走上去的那只**，狗吃了它但进不了肉格。
+	#    所以比的是"这一回合它该在哪"：自己走 => to，别的猫 => 原地；对不上就是被吃了。
+	var victims: Array = []
 	for i in controller.state.cats.size():
 		if i >= before_cells.size():
 			break
-		if i == cat_index:
-			continue
-		if controller.state.cats[i]["pos"] != before_cells[i]:
-			_spawn_takeoff(_cat_nodes[i] if i < _cat_nodes.size() else null, before_cells[i])
-			_hit_cell = before_cells[i]      # 命中环：飞出去了也还剩这一下
-			_hit_t = 0.45
-			_shake(0.2, 5.0)
-			eaten = true
-	# 狗自己挪了窝 => 轻震一下
-	if controller.state.dog["pos"] != before_dog:
-		_shake(0.15, 3.0)
-
-	# 一次行动只播一个音效：吃子 > 低吼 > 挪动（吃肉的音效交给结算页的 lose）
-	if eaten:
-		_sfx("flick")
-	elif controller.result_reason != "meat_eaten":
-		_sfx("growl" if controller.state.growling else "move")
+		var expected: Vector2i = to if i == cat_index else before_cells[i]
+		if controller.state.cats[i]["pos"] != expected:
+			victims.append({ "index": i, "cell": expected })
 
 	_selected = -1
 	_bump_version()
-	_update_hint()
 	_sync_units()
 	queue_redraw()
+
+	# ---- 第一拍：我方猫滑过去（被吃掉的猫不滑，交给残影）----
+	var version := _version
+	if cat_index < _cat_nodes.size() and cat_index < controller.state.cats.size() \
+			and controller.state.cats[cat_index]["pos"] == to:
+		_slide_unit(_cat_nodes[cat_index], _cell_center(before_cells[cat_index]), _cell_center(to))
+	# 狗先钉回旧格（_sync_units 已经把它摆到新格了，不钉住就会"先跳一下再滑回去"）
+	if _dog_node != null:
+		_dog_node.position = _cell_center(before_dog)
+
+	await get_tree().create_timer(SLIDE_SECONDS).timeout
+	if not is_inside_tree() or version != _version:
+		return      # 这期间重开 / 悔棋 / 又走了一步 => 这一拍作废，别去动新的节点
+	# ---- 第二拍：狗动 ----
+	_play_dog_turn(victims, before_dog, meat_eaten)
+
+
+func _play_dog_turn(victims: Array, before_dog: Vector2i, meat_eaten: bool) -> void:
+	for v in victims:
+		_spawn_takeoff(_cat_nodes[v["index"]] if v["index"] < _cat_nodes.size() else null, v["cell"])
+		_hit_cell = v["cell"]              # 命中环：飞出去了也还剩这一下
+		_hit_t = 0.45
+		_shake(0.2, 5.0)
+	if controller.state.dog["pos"] != before_dog:
+		_shake(0.15, 3.0)                  # 狗自己挪了窝 => 轻震一下
+
+	# 一次行动只播一个音效：吃子 > 低吼 > 挪动（吃肉的音效交给结算页的 lose）
+	if not victims.is_empty():
+		_sfx("flick")
+	elif not meat_eaten:
+		_sfx("growl" if controller.state.growling else "move")
+
+	_slide_unit(_dog_node, _cell_center(before_dog), _cell_center(controller.state.dog["pos"]))
+	queue_redraw()
+
+	# 提示要走一遍求解器（几十~几百毫秒，纯主线程，会吃掉一整帧的 delta，让 tween 直接跳到终点）。
+	# 所以**等狗滑完再算**：不然它会把上面这一滑动"卡掉"，看起来像瞬移。
+	await get_tree().create_timer(SLIDE_SECONDS).timeout
+	if is_inside_tree():
+		_update_hint()
+		queue_redraw()
 
 
 ## 调试用（F1，只在 debug 构建里生效）：把"狗为什么跑 / 为什么跑不掉"逐条打出来。
@@ -1082,12 +1243,27 @@ func _color(key: String) -> Color:
 	return Color(String(colors.get(key, "#ffffff")))
 
 
-func _text(txt: String, pos: Vector2, size: int, tint: Color) -> void:
-	draw_string(ThemeDB.fallback_font, pos, txt, HORIZONTAL_ALIGNMENT_LEFT, -1, size, tint)
+## HUD / 说明文字用正文字体（霞鹜文楷）
+func _text(txt: String, pos: Vector2, size: int, tint: Color, font: Font = FONT_BODY) -> void:
+	draw_string(font, pos, txt, HORIZONTAL_ALIGNMENT_LEFT, -1, size, tint)
 
 
-func _text_centered(txt: String, cx: float, cy: float, size: int, tint: Color) -> void:
-	var font := ThemeDB.fallback_font
+## 警告文字**不能**直接 draw_string：单位和障碍是 board 的子节点，永远压在 board 自己的
+## _draw() 之上（ARCHITECTURE 9.2），写在格子上的字会被障碍物盖住。
+## 所以这里只把字收集进 warn_texts，由 _warn_layer（z_index 更高、后画）落笔。
+func _warn_text(txt: String, cx: float, cy: float, size: int, tint: Color) -> void:
+	var font := FONT_DISPLAY          # 棋盘上的标签用得意黑，粗一点更好认
+	var w := font.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
+	var ascent := font.get_ascent(size)
+	var descent := font.get_descent(size)
+	warn_texts.append({
+		"txt": txt, "size": size, "tint": tint, "font": font,
+		"at": Vector2(cx - w * 0.5, cy + (ascent - descent) * 0.5),
+	})
+
+
+func _text_centered(txt: String, cx: float, cy: float, size: int, tint: Color,
+		font: Font = FONT_BODY) -> void:
 	var w := font.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
 	var ascent := font.get_ascent(size)
 	var descent := font.get_descent(size)

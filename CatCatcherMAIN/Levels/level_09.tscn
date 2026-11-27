@@ -1,0 +1,38 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="Script" path="res://CatCatcherMAIN/Levels/level.gd" id="1_script"]
+[ext_resource type="PackedScene" path="res://CatCatcherMAIN/Characters/Cats/cat_horse.tscn" id="2_horse"]
+[ext_resource type="PackedScene" path="res://CatCatcherMAIN/Characters/Cats/cat_bishop.tscn" id="3_bishop"]
+[ext_resource type="PackedScene" path="res://CatCatcherMAIN/Characters/Dogs/dog_stray.tscn" id="4_dog"]
+[ext_resource type="PackedScene" path="res://CatCatcherMAIN/Characters/Meat/meat.tscn" id="5_meat"]
+[ext_resource type="PackedScene" path="res://CatCatcherMAIN/Characters/Objects/obstacle.tscn" id="6_obstacle"]
+
+[node name="Level09" type="Node2D"]
+script = ExtResource("1_script")
+level_id = 9
+level_name = "终局 · 铁闸"
+max_turns = 15
+
+[node name="CatHorse" parent="." instance=ExtResource("2_horse")]
+position = Vector2(320, 72)
+
+[node name="CatBishop" parent="." instance=ExtResource("3_bishop")]
+position = Vector2(640, 72)
+
+[node name="Dog" parent="." instance=ExtResource("4_dog")]
+position = Vector2(576, 392)
+
+[node name="Meat" parent="." instance=ExtResource("5_meat")]
+position = Vector2(512, 264)
+
+[node name="Obstacle1" parent="." instance=ExtResource("6_obstacle")]
+position = Vector2(512, 392)
+
+[node name="Obstacle2" parent="." instance=ExtResource("6_obstacle")]
+position = Vector2(384, 72)
+
+[node name="Obstacle3" parent="." instance=ExtResource("6_obstacle")]
+position = Vector2(512, 200)
+
+[node name="Obstacle4" parent="." instance=ExtResource("6_obstacle")]
+position = Vector2(640, 200)

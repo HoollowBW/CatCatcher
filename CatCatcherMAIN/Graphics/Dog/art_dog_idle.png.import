@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://d0d5b5iwhejhm"
-path="res://.godot/imported/cat_horse.png-de9b872af6df8eaa04bb64653df15896.ctex"
+uid="uid://x7pms6p382xe"
+path="res://.godot/imported/art_dog_idle.png-b0baaa9dcc51f0b4cc6ff06c05c525b5.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://CatCatcherMAIN/Graphics/placeholders/cat_horse.png"
-dest_files=["res://.godot/imported/cat_horse.png-de9b872af6df8eaa04bb64653df15896.ctex"]
+source_file="res://CatCatcherMAIN/Graphics/Dog/art_dog_idle.png"
+dest_files=["res://.godot/imported/art_dog_idle.png-b0baaa9dcc51f0b4cc6ff06c05c525b5.ctex"]
 
 [params]
 

@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://cfjagea3h2kt7"
-path="res://.godot/imported/cat_rook.png-5a8a4c875cc5275f113307f5f83facdf.ctex"
+uid="uid://curpv7kgvuykb"
+path="res://.godot/imported/art_arrow_orange.png-d172eed006328b668b3164f46b90c37d.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://CatCatcherMAIN/Graphics/placeholders/cat_rook.png"
-dest_files=["res://.godot/imported/cat_rook.png-5a8a4c875cc5275f113307f5f83facdf.ctex"]
+source_file="res://CatCatcherMAIN/Graphics/Tips/art_arrow_orange.png"
+dest_files=["res://.godot/imported/art_arrow_orange.png-d172eed006328b668b3164f46b90c37d.ctex"]
 
 [params]
 

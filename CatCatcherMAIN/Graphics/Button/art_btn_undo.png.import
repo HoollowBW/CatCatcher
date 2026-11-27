@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://diyp86gb6ni0g"
-path="res://.godot/imported/cat_bishop.png-554d68b909c768a8322d8ee7e5452b88.ctex"
+uid="uid://beuyw0y8im2nv"
+path="res://.godot/imported/art_btn_undo.png-38c79aa8cf65eba7aa46d63c4f2a37ff.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://CatCatcherMAIN/Graphics/placeholders/cat_bishop.png"
-dest_files=["res://.godot/imported/cat_bishop.png-554d68b909c768a8322d8ee7e5452b88.ctex"]
+source_file="res://CatCatcherMAIN/Graphics/Button/art_btn_undo.png"
+dest_files=["res://.godot/imported/art_btn_undo.png-38c79aa8cf65eba7aa46d63c4f2a37ff.ctex"]
 
 [params]
 

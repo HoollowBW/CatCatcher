@@ -2,6 +2,7 @@
   "board": {
     "cell_size": 64,
     "origin": [288, 40],
+    "control_alpha": 0.62,
     "colors": {
       "bg": "#2b2620",
       "cell": "#f5ecd8",
@@ -22,13 +23,16 @@
     "warning_width": 3
   },
   "hint": {
-    "tutorial_levels": 2,
+    "tutorial_levels": 3,
     "fail_threshold": 2,
     "idle_seconds": 60
   },
   "solver": {
-    "validate_depth": 4,
-    "hint_depth": 5,
+    "validate_depth": 6,
+    "hint_depth": 6,
     "node_budget": 200000
+  },
+  "audio": {
+    "music_db": -12
   }
 }

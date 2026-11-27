@@ -210,6 +210,24 @@ func _test_dog_ai() -> void:
 	var plugged := _mk(Vector2i(4, 4), [{ "type": "pawn", "pos": Vector2i(5, 4) }], { "meat": Vector2i(5, 4) })
 	_eq(String(DogAI.plan(plugged)["kind"]), "flick", "肉格有猫时先吃猫")
 
+	# 撞无保护猫**优先于吃肉**：狗贴着肉、已经低吼过（下一口就是肉），但嘴边挂着只没人罩的猫
+	var distracted := _mk(Vector2i(4, 4), [{ "type": "pawn", "pos": Vector2i(4, 5) }],
+		{ "meat": Vector2i(5, 4), "growling": true })
+	var pd := DogAI.plan(distracted)
+	_eq(String(pd["kind"]), "flick", "吃得掉的猫优先于吃肉")
+	_eq(pd["to"], Vector2i(4, 5), "咬的是那只没人罩的猫")
+	# 反过来：那只猫被罩住了就吃不掉。
+	# ⚠️ 注意这条规则推论：贴身猫的控制范围一定覆盖狗那格（猫控制自己的四邻格），
+	#    所以"贴身猫被罩住 => 狗那格也就被罩住 => 它多半会跑"。要让它真去吃肉，
+	#    得把它其余出口也堵上（下面用两块障碍），否则测的是逃跑而不是优先级。
+	var shielded := _mk(Vector2i(4, 4), [
+		{ "type": "pawn", "pos": Vector2i(4, 5) },
+		{ "type": "rook", "pos": Vector2i(0, 5) },
+	], { "meat": Vector2i(5, 4), "growling": true,
+		"obstacles": [Vector2i(3, 4), Vector2i(4, 3)] })
+	_ok(not Encircle.can_flee(shielded), "（前提）它没地方可跑")
+	_eq(String(DogAI.plan(shielded)["kind"]), "eat", "猫被罩住吃不动 => 照旧吃肉")
+
 	# 朝肉方向被吃得掉的猫挡住：吃掉它（挡在狗真正想走的 (2,3) 上）
 	var blocker := _mk(Vector2i(2, 2), [{ "type": "pawn", "pos": Vector2i(2, 3) }], { "meat": Vector2i(5, 5) })
 	var p2 := DogAI.plan(blocker)

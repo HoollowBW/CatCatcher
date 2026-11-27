@@ -1,15 +1,7 @@
-[gd_scene format=3]
+[gd_scene load_steps=2 format=3]
 
-[node name="Meat" type="Polygon2D"]
-color = Color(0.78, 0.32, 0.3, 1)
-polygon = PackedVector2Array(-23, -23, 23, -23, 23, 23, -23, 23)
+[ext_resource type="Texture2D" path="res://CatCatcherMAIN/Graphics/Objects/meat.png" id="1_tex"]
 
-[node name="Label" type="Label" parent="."]
-offset_left = -23.0
-offset_top = -8.0
-offset_right = 23.0
-offset_bottom = 8.0
-theme_override_font_sizes/font_size = 11
-text = "MEAT"
-horizontal_alignment = 1
-vertical_alignment = 1
+[node name="Meat" type="Sprite2D"]
+scale = Vector2(0.3, 0.3)
+texture = ExtResource("1_tex")
