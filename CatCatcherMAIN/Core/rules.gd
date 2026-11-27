@@ -56,6 +56,11 @@ static func apply_dog_turn(state: GameState, config: Dictionary) -> Dictionary:
 			# 肉格上的猫被吃掉后狗进不去，低吼清零 —— 玩家又争取到一回合
 			state.cats[victim]["pos"] = Respawn.pick_cell(state)
 			state.growling = false
+			# cat_lost = 这一回合送掉了一只猫（靠 Respawn 复活到出生点）。
+			# 只有求解器读它：提示优先给不送子的路线（见 Solver.find_line）。
+			var flicked := settle(state, config)
+			flicked["cat_lost"] = true
+			return flicked
 		_:
 			return { "outcome": WON, "reason": "encircled" }
 

@@ -17,16 +17,24 @@ const DEFAULT_BUDGET := 200000
 
 
 ## 找一条最短赢棋路线。找不到（或超预算）返回 []。
-static func find_line(state: GameState, config: Dictionary, max_depth: int = DEFAULT_DEPTH, node_budget: int = DEFAULT_BUDGET) -> Array:
-	var budget := [node_budget]
-	var seen := {}
-	for depth in range(1, max_depth + 1):
-		seen.clear()
-		var line := _search(state.clone(), config, depth, seen, budget)
-		if not line.is_empty():
-			return line
-		if int(budget[0]) <= 0:
-			return []      # 预算烧完了，再加深也没意义
+##
+## avoid_sacrifice：**优先给不送子的路线**。送子 = 那回合有猫被狗吃掉、靠 Respawn 复活到出生点。
+## 玩家反馈"送掉再复活"的将杀没有策略感，所以先整轮禁掉送子；只有干净路线压根不存在时，
+## 才退回允许送子（否则某些局面会一点提示都给不出）。两轮共用一个预算，最坏开销不变。
+static func find_line(state: GameState, config: Dictionary, max_depth: int = DEFAULT_DEPTH, node_budget: int = DEFAULT_BUDGET, avoid_sacrifice: bool = true) -> Array:
+	var passes: Array = [true, false] if avoid_sacrifice else [false]
+	for ban in passes:
+		# ponytail: 每轮各给一份预算 —— 共用一份的话，第一轮烧完会让第二轮（兜底）直接空手而归，
+		# 提示就没了。代价是不送子路线不存在时最坏开销翻倍（200k -> 400k 节点，仍是有界的）。
+		var budget := [node_budget]
+		var seen := {}
+		for depth in range(1, max_depth + 1):
+			seen.clear()
+			var line := _search(state.clone(), config, depth, seen, budget, bool(ban))
+			if not line.is_empty():
+				return line
+			if int(budget[0]) <= 0:
+				break      # 预算烧完了，再加深也没意义（这一轮放弃，走下一轮）
 	return []
 
 
@@ -44,7 +52,7 @@ static func is_solvable(state: GameState, config: Dictionary, max_depth: int = D
 
 # ---------------------------------------------------------------- 内部 ----
 
-static func _search(state: GameState, config: Dictionary, depth: int, seen: Dictionary, budget: Array) -> Array:
+static func _search(state: GameState, config: Dictionary, depth: int, seen: Dictionary, budget: Array, ban_sacrifice: bool) -> Array:
 	if depth <= 0 or int(budget[0]) <= 0:
 		return []
 
@@ -56,12 +64,16 @@ static func _search(state: GameState, config: Dictionary, depth: int, seen: Dict
 				return []
 
 			var sim := state.clone()
-			var outcome := String(Rules.apply_turn(sim, config, i, cell)["outcome"])
+			var result := Rules.apply_turn(sim, config, i, cell)
+			var outcome := String(result["outcome"])
 			var step := { "cat": [from.x, from.y], "to": [cell.x, cell.y] }
 
+			# 赢棋那一步不查送子：最后一下结束对局，玩家不会觉得那是"送"
 			if outcome == Rules.WON:
 				return [step]
 			if outcome == Rules.LOST:
+				continue
+			if ban_sacrifice and bool(result.get("cat_lost", false)):
 				continue
 
 			# 同一局面在更少剩余步数下已经展开过，就没必要再来一遍
@@ -70,7 +82,7 @@ static func _search(state: GameState, config: Dictionary, depth: int, seen: Dict
 				continue
 			seen[key] = depth - 1
 
-			var tail := _search(sim, config, depth - 1, seen, budget)
+			var tail := _search(sim, config, depth - 1, seen, budget, ban_sacrifice)
 			if not tail.is_empty():
 				return ([step] + tail)
 
