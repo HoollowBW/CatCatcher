@@ -545,16 +545,26 @@ func _string_chars(text: String) -> Array:
 
 # ---------------------------------------------------------------- 校验 ----
 
+## 自检：把刚写出来的文件**用同一个解析器重新读一遍**。
+## （不能直接 load()：新写出的 .ttf 还没 --import，Godot 这时加载不了，
+##  那是导入流程的事，跟字体结构对不对是两码事。）
 func _verify(path: String) -> void:
-	var font = load(path)
-	if font == null:
-		printerr("⚠️ 输出字体加载失败")
+	_src = FileAccess.get_file_as_bytes(path)
+	if not _load_font(path):
+		printerr("⚠️ 自检失败：重读不出来")
 		return
+	var glyphs := _num_glyphs()
+	var cmap := _read_cmap()
 	var bad := []
 	for cp in _final_char_map.keys():
-		if not font.has_char(cp):
+		if not cmap.has(cp) or int(cmap[cp]) >= glyphs:
 			bad.append(cp)
+	var empty := 0
+	for gid in range(1, glyphs):
+		if _glyph_bytes(gid).is_empty():
+			empty += 1
 	if bad.is_empty():
-		print("✓ 校验：%d 个字符全部能取到字形" % _final_char_map.size())
+		print("✓ 自检：%d 个字符都能映射到字形（共 %d 个字形，其中 %d 个空字形）"
+			% [_final_char_map.size(), glyphs, empty])
 	else:
-		printerr("⚠️ %d 个字符取不到字形" % bad.size())
+		printerr("⚠️ 自检：%d 个字符映射不到字形" % bad.size())

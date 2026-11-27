@@ -30,7 +30,7 @@ window/stretch/aspect="expand"
 
 [gui]
 
-theme/custom_font="res://CatCatcherMAIN/Fonts/LXGWWenKai-Regular/LXGWWenKai-Medium.ttf"
+theme/custom_font="res://CatCatcherMAIN/Fonts/subset/body.ttf"
 
 [physics]
 

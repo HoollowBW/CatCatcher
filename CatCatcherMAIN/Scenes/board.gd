@@ -17,8 +17,10 @@ const FONT_SMALL := 14
 ## ---- 字体 ----
 ## 得意黑（Smiley Sans，斜体标题字）：大字、数字、棋盘上的警告标签。
 ## 霞鹜文楷（LXGW WenKai，正文字）：HUD 说明文字、结算说明。
-const FONT_DISPLAY := preload("res://CatCatcherMAIN/Fonts/DeYiHei/SmileySans-Oblique-3.otf")
-const FONT_BODY := preload("res://CatCatcherMAIN/Fonts/LXGWWenKai-Regular/LXGWWenKai-Medium.ttf")
+## ⚠️ 用的是 **subset/** 里的子集字体（ASCII + 屏幕文案里出现的汉字），合计几十 KB。
+##    改过中文文案后要重跑 tools/subset_font.gd 再 --import，否则新加的字会缺字形。
+const FONT_DISPLAY := preload("res://CatCatcherMAIN/Fonts/subset/display.ttf")
+const FONT_BODY := preload("res://CatCatcherMAIN/Fonts/subset/body.ttf")
 
 ## 单位平移的时长。原来是 0.16，改成"我方猫先动、狗后动"两拍后**速度翻倍**（各 0.08，
 ## 总时长还是 0.16）—— 狗那一拍正好接在猫滑完的瞬间。
@@ -73,7 +75,7 @@ var controller: GameController
 var cell_size: int = 64
 var board_origin := Vector2i.ZERO
 var colors: Dictionary = {}
-var _control_alpha: float = 0.92     # 控制格爪印的不透明度（配置 board.control_alpha）
+var _control_alpha: float = 0.0     # 控制格爪印的不透明度（配置 board.control_alpha）
 
 ## ---- 关卡场景与单位节点 ----
 var _level_root: Node2D = null      # 装着实例化进来的关卡场景
@@ -953,10 +955,12 @@ func _build_ui_layer() -> void:
 
 
 ## 右上角的图标按钮（美术：Graphics/Button/）。slot 0 = 最靠右，slot 1/2 依次往左。
-## 图标是手绘笔刷，背景保持默认的深色圆角块（在浅色棋盘上才看得清）。
+## flat = true：**不要默认那层深色面板**，手绘笔刷直接落在页面底色上。
+## 悬停/按下靠 modulate 反馈（没有底框时不给反馈就像贴纸，点不动）。
 func _make_icon_button(tex: Texture2D, slot: int, tip: String) -> Button:
 	var b := Button.new()
 	b.icon = tex
+	b.flat = true
 	b.anchor_left = 1.0
 	b.anchor_right = 1.0
 	b.offset_left = -60.0 - 62.0 * slot
@@ -966,7 +970,11 @@ func _make_icon_button(tex: Texture2D, slot: int, tip: String) -> Button:
 	b.focus_mode = Control.FOCUS_NONE
 	b.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	b.expand_icon = false
-	b.add_theme_constant_override("icon_max_width", 32)
+	b.add_theme_constant_override("icon_max_width", 38)
+	# 没有底框了，用图标本身的明暗变化表示悬停/按下
+	b.add_theme_color_override("icon_normal_color", Color(1, 1, 1, 0.92))
+	b.add_theme_color_override("icon_hover_color", Color(1, 1, 1, 1.0))
+	b.add_theme_color_override("icon_pressed_color", Color(1, 1, 1, 0.65))
 	b.tooltip_text = tip
 	_ui_layer.add_child(b)
 	return b

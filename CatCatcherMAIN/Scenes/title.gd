@@ -53,8 +53,8 @@ var _base_scale: Array = []
 var _flash: ColorRect = null
 var _banner: Label = null
 
-## 标题字用得意黑（和棋盘上的大字同一套）
-const FONT_DISPLAY := preload("res://CatCatcherMAIN/Fonts/DeYiHei/SmileySans-Oblique-3.otf")
+## 标题字用得意黑（和棋盘上的大字同一套；用 subset 里的子集字体）
+const FONT_DISPLAY := preload("res://CatCatcherMAIN/Fonts/subset/display.ttf")
 ## 控制格爪印（和棋盘同一张图、同一个不透明度，演示里看到的规则图 = 进游戏后的样子）
 const TEX_CONTROL_CELL := preload("res://CatCatcherMAIN/Graphics/Grids/art_control_cell.png")
 
