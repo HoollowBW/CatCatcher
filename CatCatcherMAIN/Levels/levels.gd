@@ -5,16 +5,16 @@ extends RefCounted
 ##
 ## 做新关卡：FileSystem 里复制一个 Levels/level_XX.tscn → 改名 → 在下面 SCENES 里加一行。
 
-## ⚠️ **播放顺序 = 这个数组的顺序**，不是文件名编号（level_07「守肉」是第 3 关）。
-## 新关按主题插进来就行，别去重命名已有文件。
+## ⚠️ **数组顺序 = 播放顺序 = 文件名编号**：level_07 就是第 7 关（编辑器里 F6 也是这一关）。
+## 想调整难度顺序就改关卡内容，别在这里插队 —— 插过队，看文件名就猜不到是第几关。
 const SCENES := [
-	preload("res://CatCatcherMAIN/Levels/level_01.tscn"),
-	preload("res://CatCatcherMAIN/Levels/level_02.tscn"),
-	preload("res://CatCatcherMAIN/Levels/level_07.tscn"),      # 教学 · 守肉
-	preload("res://CatCatcherMAIN/Levels/level_03.tscn"),
-	preload("res://CatCatcherMAIN/Levels/level_04.tscn"),
-	preload("res://CatCatcherMAIN/Levels/level_05.tscn"),
-	preload("res://CatCatcherMAIN/Levels/level_06.tscn"),
+	preload("res://CatCatcherMAIN/Levels/level_01.tscn"),      # 教学 · 一招收网
+	preload("res://CatCatcherMAIN/Levels/level_02.tscn"),      # 教学 · 石缝
+	preload("res://CatCatcherMAIN/Levels/level_03.tscn"),      # 教学 · 守肉
+	preload("res://CatCatcherMAIN/Levels/level_04.tscn"),      # 教学 · 三步收网
+	preload("res://CatCatcherMAIN/Levels/level_05.tscn"),      # 底线杀 · 石墙
+	preload("res://CatCatcherMAIN/Levels/level_06.tscn"),      # 梯子杀
+	preload("res://CatCatcherMAIN/Levels/level_07.tscn"),      # 马象杀
 	preload("res://CatCatcherMAIN/Levels/level_08.tscn"),      # 实践 · 护肉
 	preload("res://CatCatcherMAIN/Levels/level_09.tscn"),      # 终局 · 铁闸（6 步）
 ]

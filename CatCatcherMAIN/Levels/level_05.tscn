@@ -7,26 +7,29 @@
 [ext_resource type="PackedScene" path="res://CatCatcherMAIN/Characters/Meat/meat.tscn" id="5_meat"]
 [ext_resource type="PackedScene" path="res://CatCatcherMAIN/Characters/Objects/obstacle.tscn" id="6_obstacle"]
 
-[node name="Level05" type="Node2D"]
+[node name="Level" type="Node2D"]
 script = ExtResource("1_script")
 level_id = 5
-level_name = "梯子杀"
+level_name = "底线杀 · 石墙"
 max_turns = 15
 
 [node name="CatRook" parent="." instance=ExtResource("2_rook")]
-position = Vector2(512, 328)
+position = Vector2(320, 328)
 
-[node name="CatPawn" parent="." instance=ExtResource("3_pawn")]
-position = Vector2(384, 200)
+[node name="CatPawn1" parent="." instance=ExtResource("3_pawn")]
+position = Vector2(512, 264)
+
+[node name="CatPawn2" parent="." instance=ExtResource("3_pawn")]
+position = Vector2(448, 264)
 
 [node name="Dog" parent="." instance=ExtResource("4_dog")]
-position = Vector2(576, 200)
+position = Vector2(384, 72)
 
 [node name="Meat" parent="." instance=ExtResource("5_meat")]
-position = Vector2(512, 72)
+position = Vector2(448, 200)
 
 [node name="Obstacle1" parent="." instance=ExtResource("6_obstacle")]
-position = Vector2(640, 136)
+position = Vector2(576, 264)
 
 [node name="Obstacle2" parent="." instance=ExtResource("6_obstacle")]
-position = Vector2(640, 200)
+position = Vector2(640, 264)
