@@ -77,6 +77,21 @@ var board_origin := Vector2i.ZERO
 var colors: Dictionary = {}
 var _control_alpha: float = 0.3     # 控制格爪印的不透明度（配置 board.control_alpha）
 
+## ---- 屏幕适配（竖屏 / 横屏）----
+## config 里的 cell_size / origin 只是「横屏 960×540」的基准；真正的尺寸和原点由
+## Layout.board_box() 按当前可见画布算（竖屏棋盘铺满宽度、整块画面居中）。
+## _ui_scale / _unit_scale > 1 时字号、按钮、单位贴图一起放大 —— 960 单位铺到 390px 宽的手机上，
+## 18 号字只剩 7px，不放大看不清。
+const LAYOUT := preload("res://CatCatcherMAIN/Scenes/layout.gd")
+const HUD_UNITS := 170.0            # 棋盘下方那块 HUD 的高度（竖屏居中时要用）
+const DESIGN_CELL := 64             # 单位贴图是按 64px 的格子画的（Characters/ 里的 scale）
+var _portrait: bool = false
+var _ui_scale: float = 1.0
+var _unit_scale: float = 1.0
+var _cat_base_scale: Array = []     # 关卡场景里单位原本的缩放，乘 _unit_scale 才是显示大小
+var _dog_base_scale := Vector2.ONE
+var _meat_base_scale := Vector2.ONE
+
 ## ---- 关卡场景与单位节点 ----
 var _level_root: Node2D = null      # 装着实例化进来的关卡场景
 var _cat_nodes: Array = []          # 顺序必须和 controller.state.cats 一致
@@ -146,11 +161,11 @@ func _ready() -> void:
 		push_error("配置加载失败 —— 框架没跑通")
 		return
 
-	cell_size = int(config["board"]["cell_size"])
-	var o: Array = config["board"]["origin"]
-	board_origin = Vector2i(int(o[0]), int(o[1]))
 	colors = config["board"]["colors"]
 	_control_alpha = float(config["board"].get("control_alpha", 0.62))
+
+	_layout_board()          # 竖屏/横屏布局：后面建控件、摆单位都要用它的结果
+	get_window().size_changed.connect(_on_window_resized)
 
 	controller = GameController.new()
 	controller.state_changed.connect(_on_state_changed)
@@ -178,6 +193,54 @@ func _ready() -> void:
 	var start := Levels.index_of_path(RunRequest.level_path)
 	RunRequest.level_path = ""
 	_start_level(maxi(start, 0))
+
+
+## 按当前可见画布算棋盘尺寸 / 原点 / 缩放。横屏维持原构图，竖屏重排（见 layout.gd）。
+func _layout_board() -> void:
+	var b: Dictionary = config.get("board", {})
+	var o: Array = b.get("origin", [288, 40])
+	var cfg_cell := int(b.get("cell_size", DESIGN_CELL))
+	var cols := level.w if level != null else 6
+	var rows := level.h if level != null else 6
+	var box := LAYOUT.board_box(get_viewport_rect().size, cols, rows, cfg_cell,
+		Vector2i(int(o[0]), int(o[1])), HUD_UNITS)
+	cell_size = int(box["cell"])
+	board_origin = Vector2i(box["origin"])
+	_portrait = bool(box["portrait"])
+	_ui_scale = float(box["scale"])
+	_unit_scale = float(cell_size) / float(DESIGN_CELL)
+
+
+## 转屏 / 拖动窗口大小：重算布局并重新摆一遍（不重启关卡，局面不动）。
+func _on_window_resized() -> void:
+	if config.is_empty():
+		return
+	_layout_board()
+	_apply_ui_scale()
+	_sync_units()
+	queue_redraw()
+
+
+## 字号和屏幕控件的尺寸都跟着 _ui_scale 走（棋盘变大而字不变 = 竖屏上只有 7px）。
+func _apply_ui_scale() -> void:
+	var k := _ui_scale
+	for b in [_undo_btn, _restart_btn, _hint_btn]:
+		if b == null:
+			continue
+		var slot := int(b.get_meta("slot", 0))
+		b.offset_left = (-60.0 - 62.0 * slot) * k
+		b.offset_right = (-8.0 - 62.0 * slot) * k
+		b.offset_top = 8.0 * k
+		b.offset_bottom = 48.0 * k
+		b.add_theme_constant_override("icon_max_width", int(round(38.0 * k)))
+	if _result_title != null:
+		_result_title.add_theme_font_size_override("font_size", int(round(30.0 * k)))
+	if _result_reason != null:
+		_result_reason.add_theme_font_size_override("font_size", int(round(float(FONT_MID) * k)))
+	if _result_prompt != null:
+		_result_prompt.add_theme_font_size_override("font_size", int(round(float(FONT_SMALL) * k)))
+	if _banner != null:
+		_banner.add_theme_font_size_override("font_size", int(round(52.0 * k)))
 
 
 ## 载入第 index 关。重开本关也走这里。
@@ -209,11 +272,20 @@ func _start_level(index: int) -> void:
 			"meat":
 				_meat_node = u["node"]
 
+	# 单位贴图是按 64px 的格子画的：记下原始缩放，摆放时再乘 _unit_scale（竖屏格子更大）
+	_cat_base_scale.clear()
+	for n in _cat_nodes:
+		_cat_base_scale.append(n.scale)
+	_dog_base_scale = _dog_node.scale if _dog_node != null else Vector2.ONE
+	_meat_base_scale = _meat_node.scale if _meat_node != null else Vector2.ONE
+
 	if level == null:
 		push_error("关卡加载失败: index %d" % _level_index)
 		return
 
 	controller.setup(level, config)
+	_layout_board()          # 关卡的 w/h 到这时候才知道（横屏下等价于空操作）
+	_apply_ui_scale()
 	_selected = -1
 	_hover = Vector2i(-1, -1)
 	_fail_count = 0
@@ -253,12 +325,16 @@ func _sync_units() -> void:
 		if i >= state.cats.size():
 			break
 		_cat_nodes[i].position = _cell_center(state.cats[i]["pos"])
+		if i < _cat_base_scale.size():
+			_cat_nodes[i].scale = _cat_base_scale[i] * _unit_scale
 		_cat_nodes[i].visible = true
 
 	if _dog_node != null:
 		_dog_node.position = _cell_center(state.dog["pos"])
+		_dog_node.scale = _dog_base_scale * _unit_scale
 	if _meat_node != null:
 		_meat_node.position = _cell_center(state.meat_pos)
+		_meat_node.scale = _meat_base_scale * _unit_scale
 
 	# 图层顺序：猫和狗压在肉的上面 —— 守肉的那只猫必须看得见（不然它就像消失了）
 	if _meat_node != null:
@@ -438,7 +514,7 @@ func _draw_focus_reach() -> void:
 		draw_rect(_cell_rect(cell), _color("control").lightened(0.15))
 	# 可落的格画个内框，和"只是被控制"区分开
 	for cell in MoveRules.legal_moves(controller.state, _selected):
-		draw_rect(_cell_rect(cell).grow(-6), _color("selected"), false, 2.0)
+		draw_rect(_cell_rect(cell).grow(-6.0 * _ui_scale), _color("selected"), false, 2.0 * _ui_scale)
 
 
 ## 单位不在这里画 —— 它们是关卡场景里拖好的节点，由 _sync_units() 挪位置。
@@ -462,7 +538,7 @@ func _draw_dog_warning(controlled: Dictionary, hide_text := false) -> void:
 	var state := controller.state
 	var dog_cell: Vector2i = state.dog["pos"]
 	var dog_cfg: Dictionary = config.get("dog", {})
-	var width := float(dog_cfg.get("warning_width", 3))
+	var width := float(dog_cfg.get("warning_width", 3)) * _ui_scale
 	var red := Color(String(dog_cfg.get("warning_outline", "#e03e3e")))
 
 	# 这回合狗究竟会干什么 —— **整个函数只算一次**，狗头和肉格两边共用同一个答案。
@@ -558,7 +634,7 @@ func _draw_preview() -> void:
 	var hyp_edge := Color(0.60, 0.86, 0.44, 0.9)
 	for cell in MoveRules.reach_cells(after_move, cat_index):
 		draw_texture_rect(TEX_CONTROL_CELL, _cell_rect(cell), false, ghost_tint)
-		draw_rect(_cell_rect(cell).grow(-3), hyp_edge, false, 1.5)
+		draw_rect(_cell_rect(cell).grow(-3.0 * _ui_scale), hyp_edge, false, 1.5 * _ui_scale)
 
 	# ② 威胁范围：把这一步真的走一遍，看狗**再下一步**能碰到哪些格
 	var sim := controller.state.clone()
@@ -568,7 +644,7 @@ func _draw_preview() -> void:
 		for action in Encircle.legal_actions(sim):
 			var threat_cell: Vector2i = action["to"]
 			draw_rect(_cell_rect(threat_cell), threat_fill)
-			draw_rect(_cell_rect(threat_cell).grow(-2), warn, false, 2.0)
+			draw_rect(_cell_rect(threat_cell).grow(-2.0 * _ui_scale), warn, false, 2.0 * _ui_scale)
 
 	# ③ 箭头和落点画在最上面（手绘橙色笔刷，和蓝色提示箭头同一套画法）
 	_draw_warn_arrow(from, to)
@@ -612,7 +688,7 @@ func _preview_cat_index() -> int:
 func _draw_selection() -> void:
 	if _selected < 0 or _selected >= controller.state.cats.size():
 		return
-	draw_rect(_cell_rect(controller.state.cats[_selected]["pos"]), _color("selected"), false, 4.0)
+	draw_rect(_cell_rect(controller.state.cats[_selected]["pos"]), _color("selected"), false, 4.0 * _ui_scale)
 
 
 ## 引导：一条从"该动的那只猫"指向目标格的手绘箭头 + 落点圈，外加猫头顶上下浮动的小箭头
@@ -686,49 +762,55 @@ func _hint_cell(arr: Array) -> Vector2i:
 
 func _draw_hud() -> void:
 	var state := controller.state
+	var k := _ui_scale
 	var bar_w := level.w * cell_size
-	var bar_pos := Vector2(board_origin.x, board_origin.y + level.h * cell_size + 14)
+	var bar_pos := Vector2(board_origin.x, board_origin.y + level.h * cell_size + 14.0 * k)
 
 	_text("回合 %d / %d" % [state.turn, level.max_turns], bar_pos, FONT_MID,
 		Color(0.9, 0.87, 0.8), FONT_DISPLAY)
 	_text("关卡 %d / %d" % [_level_index + 1, Levels.count()],
-		bar_pos + Vector2(bar_w - 96, 0), FONT_MID, Color(0.9, 0.87, 0.8), FONT_DISPLAY)
+		bar_pos + Vector2(bar_w - 96.0 * k, 0), FONT_MID, Color(0.9, 0.87, 0.8), FONT_DISPLAY)
 
 	# 回合流程：点猫 -> 点高亮格 => 走完狗立刻行动
 	if not controller.finished:
 		_text("点一只猫，再点高亮格",
-			bar_pos + Vector2(0, 26), FONT_SMALL, Color(0.78, 0.74, 0.66))
+			bar_pos + Vector2(0, 26.0 * k), FONT_SMALL, Color(0.78, 0.74, 0.66))
 		# 顺序有讲究：**罩住了会跑**优先于"它在低吼" —— 逃跑会打断低吼，这时喊"快去垫肉"反而是错的。
 		if Encircle.can_flee(state):
 			_text("罩住狗那格，它自己会跑 —— 把它赶进角落",
-				bar_pos + Vector2(0, 46), FONT_SMALL, _color("selected"))
+				bar_pos + Vector2(0, 46.0 * k), FONT_SMALL, _color("selected"))
 		elif MoveRules.controlled_cells(state).has(state.dog["pos"]):
 			# 罩住了 ≠ 赶得走。直接念它这回合真正会做的动作（DogAI.plan 是唯一来源），
 			# 别在这儿另猜一套条件 —— "低吼时罩住它为什么不动"的答案就在这两行字里。
 			var act := String(controller.preview_dog_action().get("kind", ""))
 			if act == "flick":
 				_text("它先去咬没人罩的猫",
-					bar_pos + Vector2(0, 46), FONT_SMALL, Color("#e07a3e"))
+					bar_pos + Vector2(0, 46.0 * k), FONT_SMALL, Color("#e07a3e"))
 			elif act == "eat":
 				_text("它要吃肉了 —— 把猫垫到肉格上",
-					bar_pos + Vector2(0, 46), FONT_SMALL, _color("growl"))
+					bar_pos + Vector2(0, 46.0 * k), FONT_SMALL, _color("growl"))
 			else:
 				_text("它动不了，但还够得着肉",
-					bar_pos + Vector2(0, 46), FONT_SMALL, Color("#e07a3e"))
+					bar_pos + Vector2(0, 46.0 * k), FONT_SMALL, Color("#e07a3e"))
 		elif state.growling:
 			# 狗已经低吼过 => 下一回合就吃肉了，这是最后的警告
 			_text("狗在低吼 —— 快垫肉！",
-				bar_pos + Vector2(0, 46), FONT_SMALL, _color("growl"))
+				bar_pos + Vector2(0, 46.0 * k), FONT_SMALL, _color("growl"))
 
-	_text("Z 悔棋     R 重开", bar_pos + Vector2(0, 84), FONT_SMALL, Color(0.62, 0.58, 0.5))
+	# 手机上没有键盘，这两行提示只在横屏（有键盘的设备）画
+	if not _portrait:
+		_text("Z 悔棋     R 重开", bar_pos + Vector2(0, 84.0 * k), FONT_SMALL, Color(0.62, 0.58, 0.5))
 
-	# 提示文字放棋盘右侧空白处，别挤 HUD 下面那点地方
+	# 提示放棋盘右边（横屏）；竖屏棋盘把宽度占满了，改放棋盘上方那片空白
 	if not _hint_step.is_empty() and not controller.finished:
 		var cat_cell := _hint_cell(_hint_step["cat"])
 		var to_cell := _hint_cell(_hint_step["to"])
-		_text("提示", bar_pos + Vector2(bar_w + 24, 6), FONT_SMALL, _color("hint"), FONT_DISPLAY)
-		_text("(%d,%d)" % [cat_cell.x, cat_cell.y], bar_pos + Vector2(bar_w + 24, 26), FONT_SMALL, Color(0.85, 0.82, 0.76), FONT_DISPLAY)
-		_text("→ (%d,%d)" % [to_cell.x, to_cell.y], bar_pos + Vector2(bar_w + 24, 44), FONT_SMALL, Color(0.85, 0.82, 0.76), FONT_DISPLAY)
+		var hint_pos := bar_pos + Vector2(bar_w + 24.0 * k, 6.0 * k)
+		if _portrait:
+			hint_pos = Vector2(board_origin.x, board_origin.y - 96.0 * k)
+		_text("提示", hint_pos, FONT_SMALL, _color("hint"), FONT_DISPLAY)
+		_text("(%d,%d)" % [cat_cell.x, cat_cell.y], hint_pos + Vector2(0, 20.0 * k), FONT_SMALL, Color(0.85, 0.82, 0.76), FONT_DISPLAY)
+		_text("→ (%d,%d)" % [to_cell.x, to_cell.y], hint_pos + Vector2(0, 38.0 * k), FONT_SMALL, Color(0.85, 0.82, 0.76), FONT_DISPLAY)
 
 
 # ------------------------------------------------------------ 演出（无美术）----
@@ -889,7 +971,7 @@ func _tick_takeoff(p: float, ghost: Sprite2D, base: Vector2, base_scale: Vector2
 	if not is_instance_valid(ghost):
 		return
 	ghost.rotation = p * TAU * 6.0
-	ghost.position = base + dir * (320.0 * p)
+	ghost.position = base + dir * (320.0 * _unit_scale * p)
 	ghost.scale = base_scale * (1.0 - 0.55 * p)
 	ghost.modulate.a = 1.0 - clampf((p - 0.5) / 0.5, 0.0, 1.0)
 
@@ -952,6 +1034,7 @@ func _build_ui_layer() -> void:
 		queue_redraw())
 
 	_refresh_buttons()
+	_apply_ui_scale()        # 按钮尺寸跟着 _ui_scale（竖屏要大一圈才点得到）
 
 
 ## 右上角的图标按钮（美术：Graphics/Button/）。slot 0 = 最靠右，slot 1/2 依次往左。
@@ -961,6 +1044,7 @@ func _make_icon_button(tex: Texture2D, slot: int, tip: String) -> Button:
 	var b := Button.new()
 	b.icon = tex
 	b.flat = true
+	b.set_meta("slot", slot)          # _apply_ui_scale 按 slot 重算偏移（竖屏按钮要放大）
 	b.anchor_left = 1.0
 	b.anchor_right = 1.0
 	b.offset_left = -60.0 - 62.0 * slot
@@ -1011,14 +1095,18 @@ func _make_result_label(top: int, height: int, size: int, tint: Color) -> Label:
 	var l := Label.new()
 	l.anchor_left = 0.0
 	l.anchor_right = 1.0
+	# 竖向锚在**画布正中**：竖屏画布能高达 2000+ 单位，固定 y=215 会让结算字跑到屏幕上方去。
+	# 270 = 540/2，所以横屏下位置和以前一模一样。
+	l.anchor_top = 0.5
+	l.anchor_bottom = 0.5
 	l.offset_left = 0.0
 	l.offset_right = 0.0
-	l.offset_top = float(top)
-	l.offset_bottom = float(top + height)
+	l.offset_top = float(top) - 270.0
+	l.offset_bottom = float(top) - 270.0 + float(height)
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	l.add_theme_font_override("font", FONT_DISPLAY if size >= FONT_MID else FONT_BODY)
-	l.add_theme_font_size_override("font_size", size)
+	l.add_theme_font_size_override("font_size", _font_px(size))
 	l.add_theme_color_override("font_color", tint)
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_result_layer.add_child(l)
@@ -1272,8 +1360,14 @@ func _color(key: String) -> Color:
 
 
 ## HUD / 说明文字用正文字体（霞鹜文楷）
+## ⚠️ 字号在这里统一乘 _ui_scale：竖屏棋盘放大后，字号不跟着放就只有 7px 高。
 func _text(txt: String, pos: Vector2, size: int, tint: Color, font: Font = FONT_BODY) -> void:
-	draw_string(font, pos, txt, HORIZONTAL_ALIGNMENT_LEFT, -1, size, tint)
+	draw_string(font, pos, txt, HORIZONTAL_ALIGNMENT_LEFT, -1, _font_px(size), tint)
+
+
+## 设计字号 -> 实际字号（竖屏会放大）
+func _font_px(size: int) -> int:
+	return int(round(float(size) * _ui_scale))
 
 
 ## 警告文字**不能**直接 draw_string：单位和障碍是 board 的子节点，永远压在 board 自己的
@@ -1281,6 +1375,7 @@ func _text(txt: String, pos: Vector2, size: int, tint: Color, font: Font = FONT_
 ## 所以这里只把字收集进 warn_texts，由 _warn_layer（z_index 更高、后画）落笔。
 func _warn_text(txt: String, cx: float, cy: float, size: int, tint: Color) -> void:
 	var font := FONT_DISPLAY          # 棋盘上的标签用得意黑，粗一点更好认
+	size = _font_px(size)
 	var w := font.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
 	var ascent := font.get_ascent(size)
 	var descent := font.get_descent(size)
@@ -1292,6 +1387,7 @@ func _warn_text(txt: String, cx: float, cy: float, size: int, tint: Color) -> vo
 
 func _text_centered(txt: String, cx: float, cy: float, size: int, tint: Color,
 		font: Font = FONT_BODY) -> void:
+	size = _font_px(size)
 	var w := font.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
 	var ascent := font.get_ascent(size)
 	var descent := font.get_descent(size)
