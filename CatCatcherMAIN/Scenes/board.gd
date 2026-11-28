@@ -769,8 +769,13 @@ func _draw_hud() -> void:
 
 	_text("回合 %d / %d" % [state.turn, level.max_turns], bar_pos, FONT_MID,
 		Color(0.9, 0.87, 0.8), FONT_DISPLAY)
-	_text("关卡 %d / %d" % [_level_index + 1, Levels.count()],
-		bar_pos + Vector2(bar_w - 96, 0), FONT_MID, Color(0.9, 0.87, 0.8), FONT_DISPLAY)
+	# 关卡号 = **播放顺序**（level_07 是第 3 关，见 Levels.SCENES）；带上关名，
+	# 编辑器里 F6 单跑某一关时一眼就能对上自己开的是哪张图。
+	var tag := "关卡 %d/%d" % [_level_index + 1, Levels.count()]
+	if level.display_name != "":
+		tag += " · " + level.display_name
+	var tag_w := FONT_DISPLAY.get_string_size(tag, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_MID).x
+	_text(tag, bar_pos + Vector2(bar_w - tag_w, 0), FONT_MID, Color(0.9, 0.87, 0.8), FONT_DISPLAY)
 
 	# 回合流程：点猫 -> 点高亮格 => 走完狗立刻行动
 	if not controller.finished:
