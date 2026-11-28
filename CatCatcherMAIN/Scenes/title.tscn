@@ -9,6 +9,9 @@
 [node name="Title" type="Node2D"]
 script = ExtResource("1_title")
 
+[node name="Camera" type="Camera2D" parent="."]
+position = Vector2(480, 270)
+
 [node name="Units" type="Node2D" parent="."]
 
 [node name="Dog" parent="Units" instance=ExtResource("2_dog")]

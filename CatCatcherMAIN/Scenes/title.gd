@@ -46,16 +46,15 @@ var board_origin := Vector2i.ZERO
 var colors: Dictionary = {}
 var _control_alpha: float = 0.62     # 和 board 同一个配置项
 
-## 屏幕适配：和 board.gd 共用 Layout.board_box()（竖屏棋盘铺满宽度、标题移到棋盘上方）
+## 屏幕适配：和 board.gd 共用 layout.gd —— 设计坐标不动，只算 Camera2D 的 zoom。
+## 竖屏时取景框把「标题图 + 棋盘 + 点一下」整块包进去，棋盘自然铺满宽度，
+## 单位和肉也不用各自改 scale（相机统一缩放）。
 const LAYOUT := preload("res://CatCatcherMAIN/Scenes/layout.gd")
-const DESIGN_CELL := 64
-const HUD_UNITS := 150.0             # 棋盘下面留给"点一下开始"那片空白
-const TITLE_GAP := 45.0              # 竖屏时标题图和棋盘之间的间距（设计单位，会乘 _ui_scale）
+const PAD_TOP := 130.0               # 竖屏取景：棋盘上方给标题图留的高度（设计单位）
+const PAD_BOTTOM := 80.0             # 竖屏取景：棋盘下方给"点一下"留的高度
+const TITLE_GAP := 24.0              # 标题图与棋盘之间的间距
 var _portrait: bool = false
-var _ui_scale: float = 1.0
-var _unit_scale: float = 1.0
-var _dog_base_scale := Vector2.ONE
-var _meat_base_scale := Vector2.ONE
+var _cam: Camera2D = null
 
 var _dog_node: Node2D = null
 var _meat_node: Node2D = null
@@ -100,8 +99,10 @@ func _ready() -> void:
 	for n in _cat_nodes:
 		_base_scale.append(n.scale)
 		n.visible = false
-	_dog_base_scale = _dog_node.scale
-	_meat_base_scale = _meat_node.scale
+	cell_size = int(config["board"]["cell_size"])
+	var o: Array = config["board"]["origin"]
+	board_origin = Vector2i(int(o[0]), int(o[1]))
+	_cam = $Camera
 	_layout_board()
 	get_window().size_changed.connect(_on_window_resized)
 	_meat_node.position = _cell_center(MEAT_CELL)
@@ -121,35 +122,18 @@ func _ready() -> void:
 	print("[CatCatcher] 标题页：点一下或按任意键开始")
 
 
-## 按当前可见画布算棋盘尺寸/原点（和 board.gd 同一份算法，见 layout.gd）。
+## 按当前画布算相机取景（和 board.gd 同一份算法，见 layout.gd）。
+## 竖屏时取景框连标题图和"点一下"一起包进去，于是棋盘铺满宽度、上下各留一点。
 func _layout_board() -> void:
-	var b: Dictionary = config.get("board", {})
-	var o: Array = b.get("origin", [288, 40])
-	var cfg_cell := int(b.get("cell_size", DESIGN_CELL))
-	var box := LAYOUT.board_box(get_viewport_rect().size, W, H, cfg_cell,
-		Vector2i(int(o[0]), int(o[1])), HUD_UNITS)
-	if bool(box["portrait"]):
-		# 竖屏时标题图在棋盘上方，它占的高度也要算进"居中"，否则整块会被顶到上半屏去
-		var s := float(int(box["cell"])) / float(DESIGN_CELL)
-		var kk := minf(250.0 * s, float(int(box["cell"]) * W) * 0.62) / 972.0
-		var above := 330.0 * kk + TITLE_GAP * s      # 标题不透明高度 + 与棋盘的间距
-		var box2 := LAYOUT.board_box(get_viewport_rect().size, W, H, cfg_cell,
-			Vector2i(int(o[0]), int(o[1])), HUD_UNITS + above)
-		box2["origin"] = Vector2i(box2["origin"]) + Vector2i(0, int(round(above)))
-		box = box2
-	cell_size = int(box["cell"])
-	board_origin = Vector2i(box["origin"])
-	_portrait = bool(box["portrait"])
-	_ui_scale = float(box["scale"])
-	_unit_scale = float(cell_size) / float(DESIGN_CELL)
-	_banner.add_theme_font_size_override("font_size", int(round(52.0 * _ui_scale)))
-
-
-## 标题图缩放系数：横屏固定 250 宽，竖屏跟着棋盘一起放大（但不超过棋盘的 62%）
-func _title_k() -> float:
-	if not _portrait:
-		return 250.0 / 972.0
-	return minf(250.0 * _ui_scale, float(cell_size * W) * 0.62) / 972.0
+	var board := Rect2(Vector2(board_origin), Vector2(W * cell_size, H * cell_size))
+	var fit := LAYOUT.view_fit(get_viewport_rect().size, board, PAD_BOTTOM, PAD_TOP)
+	_portrait = bool(fit["portrait"])
+	if _cam != null:
+		_cam.position = fit["center"]
+		var z := float(fit["zoom"])
+		_cam.zoom = Vector2(z, z)
+		# CanvasLayer 里的"围死了！"大标语不吃相机缩放，自己跟着放大
+		_banner.add_theme_font_size_override("font_size", int(round(52.0 * z)))
 
 
 ## 转屏 / 改窗口大小：重算布局并重摆演示单位。
@@ -227,7 +211,6 @@ func _update_units() -> void:
 			pos.x += sin(_t * 40.0) * 2.0      # 走不掉了，原地挣扎
 	_dog_node.position = pos
 	_dog_node.visible = demo
-	_dog_node.scale = _dog_base_scale * _unit_scale     # 竖屏格子更大，单位贴图跟着放大
 	# 围死那一刻换成"困毙"姿势，和实战里赢了之后的样子一致
 	if _dog_node is Sprite2D:
 		var sprite := _dog_node as Sprite2D
@@ -239,7 +222,7 @@ func _update_units() -> void:
 		var node: Node2D = _cat_nodes[i]
 		node.visible = demo and pop > 0.0
 		node.position = _cell_center(CAT_CELLS[i])
-		node.scale = _base_scale[i] * (0.35 + 0.65 * pop) * _unit_scale
+		node.scale = _base_scale[i] * (0.35 + 0.65 * pop)
 
 
 func _update_fx() -> void:
@@ -278,13 +261,15 @@ func _draw() -> void:
 
 func _draw_title() -> void:
 	# 手绘标题图：不透明区域宽 972px，按 ~250px 显示 => k = 250/972
-	var k := _title_k()
+	# ⚠️ 全是**设计坐标**：竖屏放大由相机负责，这里不乘任何缩放系数（以前乘了就变成
+	#    "标题跟着放大、但棋盘/肉没放大"这种不一致）。
+	var k := 250.0 / 972.0
 	var size := Vector2(1024.0, 768.0) * k
 	var center := Vector2(float(board_origin.x) * 0.5, 232.0)      # 横屏：棋盘左栏的中心
 	if _portrait:
-		# 竖屏：棋盘把宽度占满了，标题只能在棋盘**正上方**居中
-		center = Vector2(get_viewport_rect().size.x * 0.5,
-			float(board_origin.y) - 165.0 * k - TITLE_GAP * _ui_scale)
+		# 竖屏：棋盘把宽度占满了，标题只能在棋盘**正上方**居中（棋盘中心 = 画面中心）
+		center = Vector2(board_origin.x + W * cell_size * 0.5,
+			float(board_origin.y) - 165.0 * k - TITLE_GAP)
 	# 不透明区域中心 (511.5, 390) 对齐到 center
 	var top_left := center - Vector2(511.5, 390.0) * k
 	draw_texture_rect(TEX_TITLE, Rect2(top_left, size), false)
@@ -292,20 +277,18 @@ func _draw_title() -> void:
 
 ## 「点一下开始」：光标箭头 + 一圈圈扩散的涟漪。不用文字。
 func _draw_click_cue() -> void:
-	var s := _ui_scale
 	var tip := Vector2(480.0, 462.0 + sin(_t * 3.2) * 3.0)
 	if _portrait:
 		# 竖屏：放棋盘正下方（上面被标题占了）
-		tip = Vector2(get_viewport_rect().size.x * 0.5,
-			float(board_origin.y + cell_size * H) + 46.0 * s + sin(_t * 3.2) * 3.0 * s)
+		tip = Vector2(board_origin.x + W * cell_size * 0.5,
+			float(board_origin.y + cell_size * H) + 46.0 + sin(_t * 3.2) * 3.0)
 	var ink := _color("cell")
 	for i in 3:
 		var k := fmod(_t + float(i) * 0.45, 1.35) / 1.35
-		draw_arc(tip, 8.0 * s + k * 26.0 * s, 0.0, TAU, 28, Color(ink, 0.5 * (1.0 - k)), 2.0 * s)
+		draw_arc(tip, 8.0 + k * 26.0, 0.0, TAU, 28, Color(ink, 0.5 * (1.0 - k)), 2.0)
 	draw_colored_polygon(PackedVector2Array([
-		tip + Vector2(0, 0) * s, tip + Vector2(0, 26) * s, tip + Vector2(7, 19) * s,
-		tip + Vector2(11, 28) * s, tip + Vector2(16, 26) * s, tip + Vector2(12, 17) * s,
-		tip + Vector2(20, 17) * s,
+		tip + Vector2(0, 0), tip + Vector2(0, 26), tip + Vector2(7, 19), tip + Vector2(11, 28),
+		tip + Vector2(16, 26), tip + Vector2(12, 17), tip + Vector2(20, 17),
 	]), ink)
 
 
