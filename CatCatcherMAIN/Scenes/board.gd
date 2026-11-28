@@ -26,6 +26,10 @@ const FONT_BODY := preload("res://CatCatcherMAIN/Fonts/subset/body.ttf")
 ## 总时长还是 0.16）—— 狗那一拍正好接在猫滑完的瞬间。
 const SLIDE_SECONDS := 0.08
 
+## 引导箭头 / 落点圈的尺寸（格子边长的倍数）。**固定值**：以前按距离切换大小，看着忽大忽小。
+const HINT_RING := 0.64
+const HINT_HEAD := 0.42
+
 ## 警告文字那一层的脚本（画在单位/障碍上面，见 _build_warn_layer）
 const WARN_LAYER := preload("res://CatCatcherMAIN/Scenes/warn_layer.gd")
 
@@ -89,6 +93,10 @@ var _portrait: bool = false
 var _ui_scale: float = 1.0
 var _cam: Camera2D = null
 
+## 肉被吃掉之后：停掉"腐烂"上色（否则每帧会把淡出覆盖回去），结算期间保持消失状态
+var _meat_gone: bool = false
+var _meat_base_scale := Vector2.ONE
+
 ## ---- 关卡场景与单位节点 ----
 var _level_root: Node2D = null      # 装着实例化进来的关卡场景
 var _cat_nodes: Array = []          # 顺序必须和 controller.state.cats 一致
@@ -126,7 +134,9 @@ var _version: int = 0             # 局面版本号，每次行动 +1
 var _fail_count: int = 0          # 本关失败次数
 var _idle: float = 0.0            # 距上次操作的秒数
 var _hint_time: float = 0.0       # 引导箭头的浮动动画计时
-var _hint_forced: bool = false    # 玩家按了 "?" —— 这一关就一直给提示
+## 按了 "?" 之后**只给下一步**：给完就清掉，玩家再走一步就不会继续提示了
+## （前几关的强引导、连续失败、挂机那三条照旧——它们不是 "?" 触发的）。
+var _hint_oneshot: bool = false
 
 ## ---- 警告文字/笔刷层（画在单位/障碍上面）----
 ## board 的 _draw() 把要写的字、要画的笔刷塞进来，_warn_layer 负责落笔（见 _build_warn_layer）
@@ -269,6 +279,8 @@ func _start_level(index: int) -> void:
 				_meat_node = u["node"]
 
 	# 单位贴图是按 64px 的格子画的：设计坐标不动，位置由相机缩放（不需要改 scale）
+	_meat_base_scale = _meat_node.scale if _meat_node != null else Vector2.ONE
+	_meat_gone = false          # 换关/重开：肉还在
 	if level == null:
 		push_error("关卡加载失败: index %d" % _level_index)
 		return
@@ -278,7 +290,7 @@ func _start_level(index: int) -> void:
 	_selected = -1
 	_hover = Vector2i(-1, -1)
 	_fail_count = 0
-	_hint_forced = false       # 换关/重开就忘掉上一关按过的 "?"
+	_hint_oneshot = false      # 换关/重开就忘掉上一关按过的 "?"
 	_idle = 0.0
 	_bump_version()
 	_update_hint()
@@ -320,6 +332,7 @@ func _sync_units() -> void:
 		_dog_node.position = _cell_center(state.dog["pos"])
 	if _meat_node != null:
 		_meat_node.position = _cell_center(state.meat_pos)
+		_meat_node.scale = _meat_base_scale       # 吃到肉时放大过，换关/悔棋要摆回去
 
 	# 图层顺序：猫和狗压在肉的上面 —— 守肉的那只猫必须看得见（不然它就像消失了）
 	if _meat_node != null:
@@ -340,6 +353,8 @@ func _sync_dog_face() -> void:
 	var act := "" if controller.finished else String(controller.preview_dog_action().get("kind", ""))
 	if controller.finished and controller.won:
 		sprite.texture = TEX_DOG_TRAPPED
+	elif controller.result_reason == "meat_eaten":
+		sprite.texture = TEX_DOG_BITE      # 已经咬到肉了（结算站姿，见 _eat_meat_fx）
 	elif act == "flick":
 		sprite.texture = TEX_DOG_BITE
 	elif controller.state.growling:
@@ -387,8 +402,8 @@ func _hint_cfg(key: String, fallback: float) -> float:
 func _hint_due() -> bool:
 	if controller.finished:
 		return false
-	if _hint_forced:
-		return true                                       # 玩家按了 "?"，这一关一直给
+	if _hint_oneshot:
+		return true                                       # 刚按了 "?"，只这一次
 	if _level_index < int(_hint_cfg("tutorial_levels", 2)):
 		return true                                       # 前几关强引导
 	if _fail_count >= int(_hint_cfg("fail_threshold", 2)):
@@ -409,6 +424,7 @@ func _update_hint() -> void:
 	_hint_version = _version
 	var depth := int(config.get("solver", {}).get("hint_depth", 5))
 	_hint_step = Solver.first_step(controller.state, config, depth)
+	_hint_oneshot = false      # "?" 只顶一次：算完这一步就恢复常规判断
 
 
 func _process(delta: float) -> void:
@@ -438,6 +454,8 @@ func _process(delta: float) -> void:
 
 ## 肉随时间变质：越接近回合上限越暗、越往烂掉的黄绿走（纯 modulate，不用新美术）
 func _update_meat_rot() -> void:
+	if _meat_gone:                    # 已经被吃掉了：别再每帧把淡出覆盖回去
+		return
 	if _meat_node == null or level == null or controller == null or controller.state == null:
 		return
 	var budget := maxi(level.max_turns, 1)
@@ -690,9 +708,8 @@ func _draw_hint() -> void:
 		return
 	var dir := d.normalized()
 
-	# 一步之遥时格子之间本来就没多少空地，圈和箭头都得缩小，否则挤成一坨
-	var near := d.length() < cell_size * 1.45
-	var ring_px := cell_size * (0.50 if near else 0.70)
+	# 圈和箭头用**固定大小**：以前按距离在 0.50/0.70 之间切，看着就是"忽大忽小"。
+	var ring_px := cell_size * HINT_RING
 
 	# 落点圈（画最下层，箭头压在它上面）
 	_draw_brush_center(TEX_TIP_RING, to, ring_px)
@@ -701,7 +718,7 @@ func _draw_hint() -> void:
 	var tip := to - dir * (ring_px * 0.42)
 	_draw_brush_tail(TEX_TIP_TAIL, start, tip)
 	# 箭头：笔刷默认朝左，按方向转过去，并把"笔尖"对准 tip
-	_draw_brush_head(TEX_TIP_HEAD, tip, dir, cell_size * (0.36 if near else 0.46))
+	_draw_brush_head(TEX_TIP_HEAD, tip, dir, cell_size * HINT_HEAD)
 
 	# 猫头顶浮动的小箭头：同一个笔刷缩小、朝下
 	var bob := sin(_hint_time * 4.5) * cell_size * 0.07
@@ -858,6 +875,19 @@ func _punch_meat() -> void:
 	_flash.color = Color(0.85, 0.15, 0.1, 0.22)
 
 
+## 狗吃到肉：换撕咬姿势 + 站到肉格上（滑过去由 _play_dog_turn 负责）+ 那块肉被咬掉。
+## ⚠️ 只动表现：Core 里狗的位置不变（这局已经结束），重开时 _sync_units 会把肉摆回去。
+func _eat_meat_fx() -> void:
+	_meat_gone = true
+	_sync_dog_face()
+	if _meat_node == null:
+		return
+	var tw := create_tween().bind_node(_meat_node)
+	tw.tween_property(_meat_node, "scale", _meat_base_scale * 1.45, 0.10)
+	tw.parallel().tween_property(_meat_node, "modulate:a", 0.0, 0.24)
+	tw.tween_property(_meat_node, "scale", _meat_base_scale * 0.2, 0.14)
+
+
 func _start_finish_fx(is_win: bool) -> void:
 	_fx_seq = "win" if is_win else "lose"
 	_fx_t = 0.0
@@ -1008,11 +1038,11 @@ func _build_ui_layer() -> void:
 		_start_level(_level_index))
 
 	# "?" = 主动要提示：和第一关那种常驻引导**长得一样**（同一个 _hint_step 渲染路径），
-	# 只是把"该不该给"的判断短路掉，这一关后面就一直给
-	_hint_btn = _make_icon_button(TEX_BTN_HINT, 2, "提示")
+	# 只是把"该不该给"的判断短路掉 —— 但**只给下一步**（玩家走完这一手就不再提示）。
+	_hint_btn = _make_icon_button(TEX_BTN_HINT, 2, "提示（下一步）")
 	_hint_btn.pressed.connect(func() -> void:
 		_sfx("click")
-		_hint_forced = true
+		_hint_oneshot = true
 		_hint_version = -1        # 强制重算（之前可能因为"不该给提示"被判成空）
 		_update_hint()
 		queue_redraw())
@@ -1282,7 +1312,10 @@ func _play_dog_turn(victims: Array, before_dog: Vector2i, meat_eaten: bool) -> v
 		_hit_cell = v["cell"]              # 命中环：飞出去了也还剩这一下
 		_hit_t = 0.45
 		_shake(0.2, 5.0)
-	if controller.state.dog["pos"] != before_dog:
+
+	# 吃到肉：狗一口扑上肉格（Core 里它的位置不变 —— 这局已经结束了，只是演给你看）
+	var dog_to: Vector2i = controller.state.meat_pos if meat_eaten else controller.state.dog["pos"]
+	if dog_to != before_dog:
 		_shake(0.15, 3.0)                  # 狗自己挪了窝 => 轻震一下
 
 	# 一次行动只播一个音效：吃子 > 低吼 > 挪动（吃肉的音效交给结算页的 lose）
@@ -1291,7 +1324,9 @@ func _play_dog_turn(victims: Array, before_dog: Vector2i, meat_eaten: bool) -> v
 	elif not meat_eaten:
 		_sfx("growl" if controller.state.growling else "move")
 
-	_slide_unit(_dog_node, _cell_center(before_dog), _cell_center(controller.state.dog["pos"]))
+	_slide_unit(_dog_node, _cell_center(before_dog), _cell_center(dog_to))
+	if meat_eaten:
+		_eat_meat_fx()
 	queue_redraw()
 
 	# 提示要走一遍求解器（几十~几百毫秒，纯主线程，会吃掉一整帧的 delta，让 tween 直接跳到终点）。
