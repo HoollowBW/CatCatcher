@@ -1061,6 +1061,27 @@ func _advance_after_result() -> void:
 
 # ---------------------------------------------------------------- 输入 ----
 
+## 手机上一次点击会**同时**收到 InputEventScreenTouch 和模拟出来的 InputEventMouseButton
+## （项目默认 `emulate_mouse_from_touch` 是开的），不挡的话一次点会走两遍 —— 典型症状：
+## 走到围死那一步，同一根手指顺带把结算页的"按任意键继续"点掉，玩家没看见胜负就进了下一关。
+## ponytail: 时间窗去重够用（模拟事件和触摸几乎同时到达）；要更严格就改成按事件序列配对。
+const TAP_GUARD_MS := 150
+var _last_tap_ms: int = -10000
+
+
+## 这一次是不是"一次新的点击/触摸按下"（合并手机上那两种表示，并去重）。
+func _tap_pressed(event: InputEvent) -> bool:
+	var is_tap: bool = (event is InputEventScreenTouch and event.pressed) \
+		or (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT)
+	if not is_tap:
+		return false
+	var now := Time.get_ticks_msec()
+	if now - _last_tap_ms < TAP_GUARD_MS:
+		return false
+	_last_tap_ms = now
+	return true
+
+
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
 		var hovered := _point_to_cell(get_global_mouse_position())
@@ -1073,9 +1094,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	if controller.finished:
 		if event is InputEventKey and event.pressed and not event.echo:
 			_advance_after_result()
-		elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-			_advance_after_result()
-		elif event is InputEventScreenTouch and event.pressed:
+		elif _tap_pressed(event) and _result_layer != null and _result_layer.visible:
+			# ⚠️ 要等结算界面**真的画出来**才认这一下：赢的那一刻手指还在屏幕上，
+			#    同一根手指的模拟鼠标事件会把还没看见的结算页点掉（演出要 1 秒才出结算）。
 			_advance_after_result()
 		return
 
@@ -1098,14 +1119,13 @@ func _unhandled_input(event: InputEvent) -> void:
 		queue_redraw()
 		return
 
-	# 触摸：手机上没有鼠标，用 ScreenTouch 走同一套逻辑
-	if event is InputEventScreenTouch and event.pressed:
-		_handle_tap(_point_to_cell(event.position))
+	# 触摸 / 点击：手机上一次点击会来 ScreenTouch + 模拟 MouseButton 两个事件，靠 _tap_pressed 去重
+	if not _tap_pressed(event):
 		return
-
-	if not (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT):
-		return
-	_handle_tap(_point_to_cell(get_global_mouse_position()))
+	var at := get_global_mouse_position()
+	if event is InputEventScreenTouch:
+		at = event.position
+	_handle_tap(_point_to_cell(at))
 
 
 ## 棋盘上的一次点击/触摸：点高亮格 = 走（狗立刻行动）；点猫 = 选中；点别处 = 取消
