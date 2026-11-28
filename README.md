@@ -5,6 +5,10 @@
 
 网页直接可玩：**https://hoollowbw.github.io/CatCatcher/**
 
+- 设计文档：[`DESIGN.md`](DESIGN.md)（一句话介绍 / 设计思路 / AI 协作 / 试玩迭代 / 复盘）
+- AI 对话记录：[`ai-log/README.md`](ai-log/README.md)（4 个会话、69 轮，含轮次索引；原始日志在 `ai-log/raw/`）
+- 本文件的下面部分是"怎么跑、怎么改、怎么部署"
+
 ## 跑起来
 
 ```powershell
@@ -45,6 +49,7 @@ CatCatcherMAIN/
   Characters/      单位场景：Cats/（车/马/兵/象）Dogs/ Meat/ Objects/
   Levels/          关卡场景：level_01…09.tscn + levels.gd；做新关直接复制
   Scenes/          标题页 title.tscn（主场景）+ 棋盘 board.tscn
+                   + layout.gd（屏幕适配：按画布算相机 zoom，横屏原构图 / 竖屏铺满宽度）
                    + warn_layer.gd（画在单位上面的警告文字/笔刷）+ bgm.gd（音乐 autoload）
   Graphics/        手绘素材：Cats/ Dog/ Objects/ Tips/ Grids/ Button/ Title/（文件名全 ASCII）
   Fonts/           原字体（排包外）+ subset/（实际随包的子集字体，~140 KB）
@@ -56,6 +61,9 @@ tools/dev.ps1      一键导出 + 本地预览
 tools/deploy.ps1   生成 docs/（wasm 预压 gzip + 解压 shim + pck 破缓存）
 tools/serve.ps1    本地静态服务器（dev.ps1 会自己调）
 tools/subset_font.gd  字体子集化（改了中文文案要重跑）
+tools/export_ai_log.mjs  从 DSH 会话日志导 AI 对话记录到 ai-log/
+DESIGN.md          设计文档（笔试题交付项）
+ai-log/            AI 对话记录（README 索引 + 每个会话一份 + raw/ 原始日志）
 export_presets.cfg web 导出配置
 build/web/         导出产物（gitignore + .gdignore，不入库）
 Ruler/             笔试题与要求
@@ -138,18 +146,19 @@ git add -A ; git commit -m "deploy: ..." ; git push
 3. 做下一关：FileSystem 里右键那个 `.tscn` → 复制，改名，挪几个单位
 4. 新关在 `Levels/levels.gd` 的 `SCENES` 里加一行
 
-⚠️ **播放顺序看 `levels.gd` 的数组，不是文件名编号**（`level_07` 是第 3 关）。
+⚠️ **文件名 = 关卡号 = `levels.gd` 数组顺序**（`level_07` 就是第 7 关，F6 也是这一关）。别改文件名、别插队。
 ⚠️ 单位类型是从**场景路径**认的（`Cats/cat_rook.tscn` → 车猫），别随手重命名文件或挪文件夹。
 
-设计关卡的两条硬约束（都是规则逼出来的）：
+设计关卡的三条硬约束（都是规则逼出来的）：
 - **围死必须发生在狗离肉 ≥2 格时** —— 狗贴着肉格就永远有动作（低吼/吃肉/吃垫肉的猫）
 - **别把贴身的猫白送** —— 狗会咬没人罩的猫；想让它跑，得用车/象/马隔空罩
+- **提示里不许出现"送子复活"** —— 求解器先搜不送子的路线，所以新关要么能干净解，要么得知道自己在走教学例外
 
 跑一次 `solvecheck` 量难度，启动时也会自动校验每关有解（debug 版）。
 
 ## 进度与待办
 
-玩法、9 关、美术、字体、中文、音效、音乐、GitHub Pages 部署全部完成。
+玩法、9 关、美术、字体、中文、音效、音乐、GitHub Pages 部署、设计文档、AI 对话记录**全部完成**。
 **交付清单、下一步优先级、已知粗糙处见 [`TODO.md`](TODO.md)**，改过什么、为什么是现在这样见 [`CHANGELOG.md`](CHANGELOG.md)。
 
 ## 技术
